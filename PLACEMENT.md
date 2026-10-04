@@ -11,8 +11,8 @@ Dale, 4 October 2026: "the multicore design must have a framework described to
 enable launched applications to go where they need to, ELF should let us do
 quite a lot here."
 
-Status, 4 October 2026: specified, nothing built. The open choices are in
-section 10.
+Status, 4 October 2026: specified and approved, nothing built. The choices
+in section 10 stand at their proposals.
 
 ## 1. What "placing" means under one Exec
 
@@ -259,6 +259,9 @@ both. The library adds `OMC_LoadApp`, `OMC_UnloadApp`, `OMC_AppInfo`,
 `OMC_FindKernel` and `OMC_SubmitKernel`.
 
 ## 10. Decisions
+
+Dale approved this framework on 4 October 2026 without ruling on these
+separately, so each stands at its proposal below until he says otherwise.
 
 1. **The loader hook on by default?** Patching `LoadSeg` is what makes a
    launched program go where it needs to without the user doing anything. The
