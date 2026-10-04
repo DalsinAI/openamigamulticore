@@ -1,20 +1,20 @@
-<!-- OpenAmigaMulticore's design and specification, written in AmigaChrome's development tree on 4 October 2026. Copyright (c) 2026 Dalsin Limited, MIT licence (LICENSE). -->
+<!-- OpenMulticore's design and specification, written in AmigaChrome's development tree on 4 October 2026. Copyright (c) 2026 Dalsin Limited, MIT licence (LICENSE). -->
 
-# OpenAmigaMulticore
+# OpenMulticore
 
 An open specification for presenting extra processor cores to AmigaOS, and
 the library programs use to run work on them. Anyone may build to it: our
 runtime, a PiStorm's spare cores, an FPGA board, a PowerPC or ARM card.
 
 Dale, 4 October 2026: "we should add OpenMulticore for the autoconfig spec
-and library"; its repository, and so its name, became OpenAmigaMulticore the
-same day. Like every project we call Open, it is MIT, Copyright (c) 2026
-Dalsin Limited, with the credit kept, and it gets a public repository of its
-own: `DalsinAI/openamigamulticore`.
+and library"; the product is OpenMulticore and its repository
+`DalsinAI/openamigamulticore` (Dale's naming: products drop "Amiga", repos
+carry it). Like every project we call Open, it is MIT, Copyright (c) 2026
+Dalsin Limited, with the credit kept.
 
 It builds on the ACMP note of 28 September 2026 (capsule *A1200 Shared Memory
 and ACMP*), which settled how a second CPU joins an A1200 without a second
-Exec. Its rules stand; OpenAmigaMulticore fixes what that note left open (the
+Exec. Its rules stand; OpenMulticore fixes what that note left open (the
 register offsets, the record layouts, the library) and opens it to other
 hardware.
 
@@ -38,16 +38,16 @@ hardware.
 - **The latch stops every extra core** while a game takes the machine.
 - **Faces, not kernels.** `powerpc.library` (WarpOS) and `ppc.library`
   (PowerUP), and later `arm.library` and `x86.library`, sit on
-  `openamigamulticore.library` when a core of that kind exists.
+  `openmulticore.library` when a core of that kind exists.
 
 ## 2. Two ways to present cores
 
-- **An autoconfig board** (section 3): the hardware way. OpenAmigaMulticore's
+- **An autoconfig board** (section 3): the hardware way. OpenMulticore's
   reference board is Dalsin $DA15, product 7 (the number ACMP reserved), IO,
   64 KB. Another maker's board uses its own manufacturer and product and is
-  listed in `ENVARC:OpenAmigaMulticore/Boards` (manufacturer, product) so the
+  listed in `ENVARC:OpenMulticore/Boards` (manufacturer, product) so the
   library looks at it; the library never reads an unknown board's registers.
-- **A provider** registered with `openamigamulticore.resource`: for systems whose
+- **A provider** registered with `openmulticore.resource`: for systems whose
   extra cores aren't on the Zorro bus, such as a PiStorm, where Emu68 owns the
   Raspberry Pi's spare cores. The provider gives the library the same
   per-core operations (start, ring, read status, latch) as calls instead of
@@ -106,7 +106,7 @@ fault), two result longwords, the core's cycles or time spent, and a request
 field: a job that needs the OS posts a request instead of a result, CPU0
 does it (a WarpOS-style bounce to the 68k) and rings the job on.
 
-## 4. openamigamulticore.library
+## 4. openmulticore.library
 
 What programs open. The faces open it too.
 
@@ -120,7 +120,7 @@ What programs open. The faces open it too.
 - `OMC_Check(id)`, `OMC_Wait(id)`, and a signal on completion
   (`OMC_SetSignal`), from the level 2 server.
 - `OMC_Run68k(func, args, n)`: the common case in one call, run a 68k
-  function on another 68k core and wait (the `RunPPC` of OpenAmigaMulticore).
+  function on another 68k core and wait (the `RunPPC` of OpenMulticore).
 - `OMC_Latch(on)`: what a game, or `Forbid`-heavy code, uses to stop the
   extra cores.
 - A batch interface for maths (Dale, the same day: "it should allow a maths
@@ -133,7 +133,7 @@ what it needs from the OS it asks for through a completion request.
 
 ## 5. In AmigaChrome
 
-- **The board:** OpenAmigaMulticore product 7 in the A1200 runtime's autoconfig
+- **The board:** OpenMulticore product 7 in the A1200 runtime's autoconfig
   chain, fitted from the instance's Hardware panel ("Extra cores").
 - **Host-native jobs first:** a pool of host threads running numbered
   functions (maths batches, codecs, compression) on the machine's memory.
@@ -149,7 +149,7 @@ what it needs from the OS it asks for through a completion request.
 ## 6. Elsewhere
 
 - **PiStorm:** Emu68 runs the 68k on one of the Pi's cores; the others could
-  be OpenAmigaMulticore cores through a provider (section 2). That is Emu68's work
+  be OpenMulticore cores through a provider (section 2). That is Emu68's work
   to do; the spec and the library are open for it.
 - **Real cards:** a PowerPC or ARM card with shared RAM implements section 3
   in its logic or firmware, under its own manufacturer and product.
@@ -160,7 +160,7 @@ what it needs from the OS it asks for through a completion request.
 | Phase | Delivers | Done when |
 | --- | --- | --- |
 | 0 | The spec (this document, then `SPEC.md` in its repository): registers, records, the library's calls | Published, MIT |
-| 1 | The board in the runtime with host-native cores; `openamigamulticore.library` with jobs, grants, signals; a test program | A maths batch runs on host cores from OS 3.2.3 and the results match CPU0's |
+| 1 | The board in the runtime with host-native cores; `openmulticore.library` with jobs, grants, signals; a test program | A maths batch runs on host cores from OS 3.2.3 and the results match CPU0's |
 | 2 | Extra AC090 cores in host threads; `OMC_Run68k` | A 68k function runs on core 1 while CPU0 keeps Workbench running; the latch stops it |
 | 3 | A PowerPC core; `powerpc.library` and `ppc.library` faces | A WarpOS program runs |
 | 4 | The provider interface; a reference provider; notes for Emu68 | A provider registers and runs jobs |
