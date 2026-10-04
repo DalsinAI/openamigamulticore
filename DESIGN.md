@@ -173,3 +173,10 @@ what it needs from the OS it asks for through a completion request.
 - The Amiga: a test program per phase on a scratch copy, comparing each core's
   results with CPU0's, and a stress run with the latch toggled.
 - Never on Dale's validation instance until a phase passes on the copy.
+
+## 9. Placing applications
+
+How a launched program reaches the core it needs (ELF headers and an
+`"OpenMulticore"` note, marked hunk executables, a kernel table, overrides,
+fallbacks when a core is missing, and the loader) is in `PLACEMENT.md`.
+Specified 4 October 2026, not built.

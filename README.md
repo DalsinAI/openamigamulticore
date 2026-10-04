@@ -13,6 +13,9 @@ FPGA board, a PowerPC or ARM card.
   signals, `OMC_Run68k`, and batched maths. `powerpc.library` and
   `ppc.library` (WarpOS and PowerUP) sit on it as faces when a PowerPC core
   exists.
+- Placement: a launched program goes to the core it needs, read from its
+  ELF headers and an OpenMulticore note (or a marked hunk file), with
+  overrides and fallbacks when that core is missing (`PLACEMENT.md`).
 
 The design and the specification are in `DESIGN.md`. Status, 4 October 2026:
 specified; phase 1 (host-native cores in AmigaChrome) is next.
