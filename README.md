@@ -27,5 +27,5 @@ copyright notice and the licence text stay with every copy and fork. We also
 ask, as a courtesy rather than a condition, that a fork, a port or an
 implementation say it is based on OpenMulticore by Dalsin Limited.
 
-OpenMulticore was created by Dale Kirkwood at Dalsin Limited, for
+OpenMulticore was created by Dalsin Limited, for
 AmigaChrome.
