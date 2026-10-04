@@ -59,7 +59,7 @@ program's author:
 
 | Field | Tells the loader |
 | --- | --- |
-| `e_machine` | The instruction set: `EM_68K` (4), `EM_PPC` (20), `EM_ARM` (40), `EM_AARCH64` (183), `EM_386` (3), `EM_X86_64` (62). This alone picks the core kind. |
+| `e_machine` | The instruction set: `EM_68K` (4), `EM_PPC` (20), `EM_ARM` (40), `EM_AARCH64` (183), `EM_386` (3), `EM_X86_64` (62), `EM_RISCV` (243). This alone picks the core kind. |
 | `EI_CLASS`, `EI_DATA` | 32 or 64-bit, and byte order. A little-endian core (ARM, x86) sharing big-endian structures with 68k code is the face's business, not the program's; the loader records the order so the face knows. |
 | `e_type` | `ET_DYN` (position-independent): the loader allocates its `PT_LOAD` segments as grants and relocates them. `ET_EXEC` with fixed addresses is refused unless its `PT_LOAD` addresses happen to fall in memory the loader can allocate there. `ET_REL` objects (as PowerUP used) are section-based, with no segments and no entry point, so `OMC_LoadApp` doesn't take them: they load only through the PowerUP face's own `ppc.library` path, as they do today. |
 | `e_flags` | Per-architecture ABI bits: ARM EABI version and float ABI, PowerPC's embedded flags. |
@@ -145,7 +145,7 @@ the note can grow.
 | Tag | Name | Value |
 | --- | --- | --- |
 | 1 | `OMCP_SHAPE` | 0 anchored, 1 offloading, 2 hosted |
-| 2 | `OMCP_KIND` | A core kind, as `DESIGN.md` numbers them (1 68k, 2 PowerPC, 3 ARM, 4 x86, 5 host-native). Defaults to the one `e_machine` implies. |
+| 2 | `OMCP_KIND` | A core kind, as `DESIGN.md` numbers them (1 68k, 2 PowerPC, 3 ARM, 4 x86, 5 host-native, 6 RISC-V). Defaults to the one `e_machine` implies. |
 | 3 | `OMCP_MINMODEL` | The least model: $060 for a 68k, a PVR family for a PowerPC, and so on |
 | 4 | `OMCP_NEEDS` | Feature bits the code can't run without (section 9) |
 | 5 | `OMCP_WANTS` | Feature bits it runs faster with, used to rank cores |
@@ -259,10 +259,10 @@ Two ways in, sharing one loader inside `openmulticore.library`
   `dos.library`'s `LoadSeg`, `NewLoadSeg` and `InternalLoadSeg` with
   `SetFunction`, as PowerUP's loader did, and stays in memory while the patch
   is in. Something must open it before the first placed program is launched:
-  `C:OMCStart`, which the installer adds to `S:Startup-Sequence` ahead of
-  `S:User-Startup` and anything that starts programs, opens the library and
-  keeps it open. (A driver bound from `SYS:Expansion` for the board could do
-  the same job.) A file starting `$7F 'E' 'L' 'F'`, or a hunk file
+  `C:OMCStart`, which the installer adds to `S:Startup-Sequence` after
+  `BindDrivers` and ahead of `S:User-Startup` and anything that starts
+  programs, opens the library, runs the provider drivers in `SYS:Expansion`
+  (`DESIGN.md` section 2), and keeps the library open. A file starting `$7F 'E' 'L' 'F'`, or a hunk file
   with an `"OMC1"` block, goes to `OMC_LoadApp`; everything else goes to the
   original call untouched. For a hosted program it returns a segment list
   holding the 68k anchor, so the Shell, Workbench, `Run` and `WBStartup` all
@@ -307,13 +307,20 @@ placed.
 ## 9. Changes to DESIGN.md
 
 Placing by feature needs each core to say what it has. The board-level
-`FEATURES` register doesn't, so the core block gains two registers in its
+`FEATURES` register doesn't, and placement also wants to know whether a core
+is real silicon or emulated, so the core block gains three registers in its
 unused space:
 
 | Offset | Register | |
 | --- | --- | --- |
-| `+$2C` | CAPS | Feature bits: 0 FPU, 1 MMU, 2 AltiVec, 3 VFP, 4 NEON, 5 SSE2, 6 AVX2, 7 64-bit mode, 8 to 15 reserved, 16 to 31 the maker's own |
-| `+$30` | LEVEL | The ISA level where one exists: the x86-64 level, the ARM architecture version, the PowerPC ISA version |
+| `+$2C` | CAPS | Feature bits: 0 FPU, 1 MMU, 2 AltiVec, 3 VFP, 4 NEON, 5 SSE2, 6 AVX2, 7 64-bit mode, 8 RISC-V vector, 9 to 15 reserved, 16 to 31 the maker's own |
+| `+$30` | LEVEL | The ISA level where one exists: the x86-64 level, the ARM architecture version, the PowerPC ISA version, the RISC-V profile |
+| `+$34` | ORIGIN | 0 native silicon, 1 FPGA, 2 emulated (an interpreter or JIT on another CPU), 3 host (a host thread running host-native functions) |
+
+A provider driver reports the same three values through its calls. When
+several cores fit, placement prefers native, then FPGA, then emulated, before
+it looks at how busy they are; an emulated 68k core is still a 68k core, so a
+program that only fits a 68k runs on one when nothing better is there.
 
 Bits 0 to 15 mean the same on every board. Bits 16 to 31 mean whatever the
 board's maker says, so they only match when the program names that maker:
@@ -322,7 +329,8 @@ entry's VENDOR), and the library compares those bits only on cores of a board
 with that manufacturer and product. Elsewhere such a requirement doesn't fit.
 
 A board whose `VERSION` minor is below 1 reads as `CAPS` 0 and `LEVEL` 0, and
-the library falls back to `KIND` and `MODEL` alone. `OMC_CoreInfo` returns
+the library falls back to `KIND` and `MODEL` alone and takes the origin as
+native. `OMC_CoreInfo` returns
 both. The library adds `OMC_LoadApp`, `OMC_UnloadApp`, `OMC_AppInfo`,
 `OMC_FindKernel` and `OMC_SubmitKernel`.
 
@@ -339,8 +347,10 @@ separately, so each stands at its proposal below until he says otherwise.
    `OMCMark` exists.
 3. **Hosted 68k programs on extra 68k cores?** The proposal is kernels only
    for 68k in the first version, and hosted 68k as a later experiment.
-4. **The `CAPS` and `LEVEL` registers**, as section 9 sets them out, as
-   OpenMulticore 1.1.
+4. **The `CAPS`, `LEVEL` and `ORIGIN` registers**, as section 9 sets them
+   out, as OpenMulticore 1.1.
+5. **`SYS:Expansion` as the home of every core source** (`DESIGN.md` section
+   2). Dale decided this on 4 October 2026.
 
 ## 11. Phases
 
