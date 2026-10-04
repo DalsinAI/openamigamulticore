@@ -1,6 +1,6 @@
 Short:        Run jobs on extra CPU cores, open spec
-Uploader:     (Dale fills this in at upload time)
-Author:       Dale Kirkwood (Dalsin Limited)
+Uploader:     (We fill this in at upload time)
+Author:       Dalsin Limited
 Type:         util/libs
 Version:      0.1
 Architecture: m68k-amigaos >= 3.2.0

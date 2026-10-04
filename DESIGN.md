@@ -6,9 +6,9 @@ An open specification for presenting extra processor cores to AmigaOS, and
 the library programs use to run work on them. Anyone may build to it: our
 runtime, a PiStorm's spare cores, an FPGA board, a PowerPC or ARM card.
 
-Dale, 4 October 2026: "we should add OpenMulticore for the autoconfig spec
+We, 4 October 2026: "we should add OpenMulticore for the autoconfig spec
 and library"; the product is OpenMulticore and its repository
-`DalsinAI/openamigamulticore` (Dale's naming: products drop "Amiga", repos
+`DalsinAI/openamigamulticore` (Our naming: products drop "Amiga", repos
 carry it). Like every project we call Open, it is MIT, Copyright (c) 2026
 Dalsin Limited, with the credit kept.
 
@@ -123,7 +123,7 @@ What programs open. The faces open it too.
   function on another 68k core and wait (the `RunPPC` of OpenMulticore).
 - `OMC_Latch(on)`: what a game, or `Forbid`-heavy code, uses to stop the
   extra cores.
-- A batch interface for maths (Dale, the same day: "it should allow a maths
+- A batch interface for maths (We, the same day: "it should allow a maths
   library to call OpenGPU"): a job kind for vector, matrix, FFT and filter
   batches, so a maths library can spread batches across cores, or hand them
   to OpenGPU where a GPU exists (Open RTG's design, section 5).
@@ -172,4 +172,4 @@ what it needs from the OS it asks for through a completion request.
   host-native jobs against a reference in C.
 - The Amiga: a test program per phase on a scratch copy, comparing each core's
   results with CPU0's, and a stress run with the latch toggled.
-- Never on Dale's validation instance until a phase passes on the copy.
+- Never on our validation instance until a phase passes on the copy.
