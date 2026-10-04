@@ -1,0 +1,34 @@
+Short:        Run jobs on extra CPU cores, open spec
+Uploader:     (Dale fills this in at upload time)
+Author:       Dale Kirkwood (Dalsin Limited)
+Type:         util/libs
+Version:      0.1
+Architecture: m68k-amigaos >= 3.2.0
+Distribution: Aminet
+
+OpenMulticore is an open specification for presenting extra processor cores to
+AmigaOS, and openmulticore.library, which programs open to run work on them.
+The motherboard CPU keeps Exec and the custom chips; extra cores run jobs in
+shared memory and hand anything the OS must do back to it.
+
+Cores come from an autoconfig board with a published register map (a doorbell,
+a latch that stops the cores while a game takes the machine, job and
+completion rings in Fast RAM) or from a software provider, for cores that are
+not on the Zorro bus, such as a PiStorm's spare Raspberry Pi cores. Anyone may
+build hardware or a provider to the specification.
+
+The library gives programs the cores, memory grants every core may use, jobs
+with completion signals, a one-call way to run a 68k function on another core,
+and batches of maths. powerpc.library and ppc.library (WarpOS and PowerUP) can
+sit on top as faces when a PowerPC core exists.
+
+Status: this archive is the specification. The library and AmigaChrome's board
+follow; AmigaChrome (an Amiga for the PC) implements it first with cores that
+run on the host.
+
+Free software under the MIT licence, Copyright (c) 2026 Dalsin Limited. Use
+it, change it, fork it and ship it; keep the copyright notice and the licence
+with every copy. If you build on it, please say it is based on OpenMulticore
+by Dalsin Limited.
+
+Source: https://github.com/DalsinAI/openamigamulticore
