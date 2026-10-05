@@ -269,7 +269,7 @@ static LONG board_send(struct OMCJob *job, ULONG core)
             }
     }
     if (core) flags |= (core & 0x1F) << 24;           /* the core, 1 to UNITS (bits 24-28) */
-    if (core && (job->omj_Flags & OMCF_NOWAIT)) flags |= 1UL << 29;   /* taken: -8 rather than waiting */
+    if (job->omj_Flags & OMCF_NOWAIT) flags |= 1UL << 29;   /* no free core (or the named one taken): -8 rather than waiting */
     extra = job->omj_NArgs;
     io->os_Req.io_Command = OSCMD_CALL;
     io->os_Op = OP_RUNX;

@@ -244,8 +244,10 @@ What programs open. The faces open it too.
   `OMC_CoreInfo` reads the board's read-only load registers: jobs queued
   (`$2C`), and from `$100`, 16 bytes a core: state (idle, 68k, native), load
   over the last second (0 to 1000), jobs finished, and the host CPU the core
-  is pinned to. These offsets are the AC090 thread's proposal, 5 October
-  2026, and follow `CORES_BOARD.md` when it settles them.
+  is pinned to (built on the cores board, 5 October 2026). A free core takes
+  the jobs named for it before any-core jobs, and `OMCF_NOWAIT` also works
+  for `OMC_ANY`: the job fails with `OMCERR_BUSY` when no core is free, and
+  when it is admitted it holds the idle core it was given.
 - `OMC_Check(id)`, `OMC_Wait(id)`, and a signal on completion
   (`OMC_SetSignal`), from the level 2 server.
 - `OMC_Run68k(func, args, n)`: the common case in one call, run a 68k
