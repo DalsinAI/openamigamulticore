@@ -268,7 +268,8 @@ static LONG board_send(struct OMCJob *job, ULONG core)
                 }
             }
     }
-    if (core) flags |= (core & 0x1F) << 24;           /* the core, 1 to 8 (bits 24-28) */
+    if (core) flags |= (core & 0x1F) << 24;           /* the core, 1 to UNITS (bits 24-28) */
+    if (core && (job->omj_Flags & OMCF_NOWAIT)) flags |= 1UL << 29;   /* taken: -8 rather than waiting */
     extra = job->omj_NArgs;
     io->os_Req.io_Command = OSCMD_CALL;
     io->os_Op = OP_RUNX;
@@ -289,7 +290,8 @@ static LONG board_finish(struct OMCJob *job)
     LONG status;
     WaitIO((struct IORequest *)io);
     status = io->os_Req.io_Error ? OMCERR_LOST : io->os_Status;
-    if (status == -1) status = OMCERR_NOCORE;
+    if (status == -1 || status == -9) status = OMCERR_NOCORE;   /* no such service; a core past UNITS */
+    else if (status == -8) status = OMCERR_BUSY;                /* the named core was taken (no wait) */
     if (rb) {
         for (int i = 0; i < 15; i++) job->omj_Regs[i] = get32(rb + 0x08 + 4 * i);
         job->omj_FPCR = get32(rb + 0x44);
@@ -466,8 +468,6 @@ static LONG start_job(struct OMCJob *job, struct OMCBase *base)
         {
             volatile UBYTE *b = cores_board();
             if (!b || core > *(volatile ULONG *)(b + REG_UNITS)) return job->omj_Status = OMCERR_NOCORE;
-            if ((job->omj_Flags & OMCF_NOWAIT) && *(volatile ULONG *)(b + REG_CORE(core)) != 0)
-                return job->omj_Status = OMCERR_BUSY;
         }
     }
     if (board_open(job) < 0) {
