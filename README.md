@@ -7,20 +7,26 @@ FPGA board, a PowerPC or ARM card.
 
 - One Exec, on the motherboard CPU. Extra cores run jobs in shared memory,
   never the OS or the chipset.
-- Every source of cores is a driver in `SYS:Expansion`: an autoconfig board
-  with a fixed register map (doorbell, latch, job and completion rings), or a
-  provider for cores that aren't on Zorro. Host cores, a PiStorm's Pi cores,
-  RISC-V, and 68k cores emulated on the host all arrive the same way.
-- `openmulticore.library`: cores, memory grants, jobs, completion
-  signals, `OMC_Run68k`, and batched maths. `powerpc.library` and
+- Every core runs 68k code through a JIT, and may also run native code for
+  its own instruction set (x86-64 on a PC, ARM64 on a Pi). Cores sit on
+  AutoConfig boards carrying the ACSV block (CLASS 2), which say how many
+  cores they have and which instruction sets.
+- A program is a module: a 68k section, always there, and optional native
+  sections. The library runs the best one present: native on a matching
+  core, else 68k on a board core, else 68k on the main CPU, so the same
+  file runs on a plain A1200.
+- `openmulticore.library` (this repository, on top of `openservice.device`):
+  cores, memory grants, jobs, completion signals, `OMC_Run68k`, and batched
+  maths. `powerpc.library` and
   `ppc.library` (WarpOS and PowerUP) sit on it as faces when a PowerPC core
   exists.
 - Placement: a launched program goes to the core it needs, read from its
-  ELF headers and an OpenMulticore note (or a marked hunk file), with
-  overrides and fallbacks when that core is missing (`PLACEMENT.md`).
+  module's sections and an OpenMulticore note, with overrides and fallbacks
+  when that core is missing (`PLACEMENT.md`).
 
-The design and the specification are in `DESIGN.md`. Status, 4 October 2026:
-specified; phase 1 (host-native cores in AmigaChrome) is next.
+The design and the specification are in `DESIGN.md`. Status, 5 October 2026:
+specified, revised for cores by instruction set; AmigaChrome is building the
+cores board with 68k JIT cores first.
 
 ## Licence and credit
 
