@@ -14,6 +14,24 @@ quite a lot here."
 Status, 4 October 2026: specified and approved, nothing built. The choices
 in section 10 stand at their proposals.
 
+**Revised 5 October 2026 for cores by instruction set** (`DESIGN.md`
+section 0, which wins where this document still disagrees). In short:
+
+- Every core runs 68k code through a JIT, and a core may also run native
+  code for its own instruction set: x86-64 on a PC, ARM64 on a Pi. Cores sit
+  on ACSV boards (CLASS 2); UNITS at `$24` says how many, ISAS at `$28` which
+  instruction sets (bit 0 m68k, always; bit 1 x86-64; bit 2 ARM64).
+- A program or job is a **module**: a 68k section that is always there, and
+  optional native sections, in one file (section 4).
+- Placement order: a native section on a core of its instruction set, then
+  the 68k section on a board's core, then the main CPU. A real Amiga with no
+  board runs the 68k section on its own CPU.
+- Services that live on cores declare what they need: instruction sets,
+  memory, FPU and SIMD level (section 9).
+- Native sections are accepted only from modules our Kitchen built and
+  signed, until native jobs run in a sandboxed helper on the host
+  (section 10).
+
 ## 1. What "placing" means under one Exec
 
 The rule from `DESIGN.md` stands: one Exec, on CPU0. Every launched program
@@ -25,7 +43,7 @@ three shapes, and every program is one of them:
 | --- | --- | --- | --- |
 | **Anchored** | on CPU0 | CPU0 | Every program today, and every unmarked hunk executable. Nothing changes for it. |
 | **Offloading** | on CPU0 | CPU0, plus named kernels on other cores | A 68k program that sends maths, codecs or loops to other cores through `OMC_Submit`. The framework places each kernel. |
-| **Hosted** | an anchor on CPU0 | another core, start to finish | A PowerPC, ARM or x86 program (or, later, a marked 68k one) whose OS calls come back to its anchor as completion requests, the WarpOS model. |
+| **Hosted** | an anchor on CPU0 | another core, start to finish | A module's native section (x86-64 or ARM64; PowerPC if such cores come), or later its 68k section on a board core, whose OS calls come back to its anchor as completion requests, the WarpOS model. |
 
 The anchor is a small 68k process the loader creates on CPU0. It owns the
 program's Exec and DOS identity (its `Process`, its current directory, its
@@ -50,6 +68,11 @@ Defaults fill whatever none of them says: any core of the right kind, the
 least busy, fallbacks as the binary lists them.
 
 ## 3. ELF executables
+
+Since 5 October an ELF image is how a module carries a **native section**:
+`e_machine` `EM_X86_64` (62) or `EM_AARCH64` (183) picks the core, and the
+section sits in the module as section 4 describes. A module's 68k section is
+its hunk program. What follows is how the loader reads any ELF it is given.
 
 ELF carries most of what placement needs before we add anything, which is why
 it's the format of choice for code that runs off CPU0.
@@ -86,6 +109,7 @@ can't collide with anyone else's. Note types:
 | 2 | `OMC_NT_KERNELS` | A table of kernels: symbol, core kind, features, the job kind they're submitted as (section 5). |
 | 3 | `OMC_NT_FALLBACK` | The ordered list of what to do if no core fits (section 7). |
 | 4 | `OMC_NT_FACE` | Which face the program is written to: OpenMulticore native, WarpOS (`powerpc.library`), PowerUP (`ppc.library`), and later `arm.library`, `x86.library`. |
+| 5 | `OMC_NT_SIGNATURE` | 5 October 2026: our Kitchen's signature over a native section, which the loader checks before it runs one (section 10). |
 
 **The face note is required for hosting.** The loader hosts an ELF only if it
 carries an `OMC_NT_FACE` note naming a face that is present. An ELF without
@@ -128,7 +152,8 @@ the entries, then the string table. An entry:
 | `+$24` | VENDOR: 0, or the manufacturer and product (high and low word) whose private bits NEEDS uses (section 9) |
 
 **`OMC_NT_FALLBACK` (3):** version, step count, then one longword per step in
-order: 1 `OTHERIMAGE`, 2 `CPU0`, 3 `HOST`, 4 `WAIT`, 5 `REFUSE` (section 7).
+order: 1 `OTHERIMAGE`, 2 `CPU0`, 3 `HOST`, 4 `WAIT`, 5 `REFUSE`, 6 `CORE68K`
+(section 7).
 A step a loader doesn't know is skipped.
 
 **`OMC_NT_FACE` (4):** version, face, least face version. Faces: 1
@@ -145,7 +170,7 @@ the note can grow.
 | Tag | Name | Value |
 | --- | --- | --- |
 | 1 | `OMCP_SHAPE` | 0 anchored, 1 offloading, 2 hosted |
-| 2 | `OMCP_KIND` | A core kind, as `DESIGN.md` numbers them (1 68k, 2 PowerPC, 3 ARM, 4 x86, 5 host-native, 6 RISC-V). Defaults to the one `e_machine` implies. |
+| 2 | `OMCP_KIND` | A core kind, as `DESIGN.md` numbers them (1 68k, 2 PowerPC, 3 ARM, 4 x86, 5 host-native, 6 RISC-V). Defaults to the one `e_machine` implies. Since 5 October the kinds boards offer are 1 (every core, the ISAS m68k bit), 4 as x86-64 and 3 as ARM64; 5 (host-native) is a native section on such a core. |
 | 3 | `OMCP_MINMODEL` | The least model: $060 for a 68k, a PVR family for a PowerPC, and so on |
 | 4 | `OMCP_NEEDS` | Feature bits the code can't run without (section 9) |
 | 5 | `OMCP_WANTS` | Feature bits it runs faster with, used to rank cores |
@@ -157,9 +182,20 @@ the note can grow.
 | 11 | `OMCP_LEVEL` | Least ISA level (section 9) |
 | 12 | `OMCP_VENDOR` | Manufacturer and product (high and low word) whose private feature bits `OMCP_NEEDS` and `OMCP_WANTS` use; without it, those bits must be 0 to 15 only |
 
-## 4. Hunk executables
+## 4. Hunk executables, and modules
 
 Classic 68k programs keep the hunk format; nothing here makes them rebuild.
+
+**A module is a hunk program with native sections in it** (5 October 2026):
+its hunks are the 68k section, which every core and every Amiga can run, and
+each native section is an ELF image in an `"OMC1"` debug block (type
+`OMC_NT_KERNELS` for kernels, or a whole program's image), with the kernel
+table naming what is in which section. `LoadSeg` skips debug blocks, so a
+module runs as a plain 68k program on a stock OS 3.2 or 3.1 machine with no
+OpenMulticore at all. A native section carries a signature from our Kitchen
+(a further note, `OMC_NT_SIGNATURE`, type 5); the loader ignores a native
+section without a valid one while section 10's signing rule stands, and the
+module still runs from its 68k section.
 
 - **Unmarked**, which is every one that exists today: anchored on CPU0. The
   framework never moves a program that didn't ask.
@@ -238,12 +274,17 @@ the list. Each step is tried until one fits:
 | Step | Name | What happens |
 | --- | --- | --- |
 | `OTHERIMAGE` | Another image | The program ships an image for a kind that is present (section 8): use that. |
+| `CORE68K` | A board's 68k core | The 68k section, or a 68k kernel, on a board's core (every core offers `cpu.m68k/1`, a JIT-style translated 68k). Its model, features and level must be met, as for `CPU0`. |
 | `CPU0` | Run on CPU0 | The program has a 68k image or 68k kernels whose model, features and level CPU0 meets (read from `AttnFlags` and the library's own CPU check): run them on the motherboard CPU. A 68k image that needs a 68060 or an FPU that CPU0 lacks doesn't qualify, and the step is skipped. |
-| `HOST` | Host-native | A kernel has a host-native function number and a host-native core exists (AmigaChrome): run that. |
+| `HOST` | Host-native | Kept for old notes: a kernel's host-native function number on a host core. Since 5 October native work is a native section, so this is `OTHERIMAGE` on an x86-64 or ARM64 core. |
 | `WAIT` | Wait | Every fitting core is busy or latched: queue until one frees, or until the latch drops. |
 | `REFUSE` | Refuse | A requester says what's missing in plain words ("Foo needs a PowerPC core. None is fitted."), and in AmigaChrome where to fit one (the instance's Hardware panel). |
 
-The default list is `OTHERIMAGE, CPU0, HOST, REFUSE`. `WAIT` is never a
+The default list is `OTHERIMAGE, CORE68K, CPU0, REFUSE` (5 October 2026: a
+native section on a matching core, else the 68k section on a board core,
+else on the main CPU). A module always has its 68k section, so for a module
+the list never reaches `REFUSE` unless that section needs what CPU0 lacks
+(a 68060, an FPU). `WAIT` is never a
 default, because a program waiting on a latch nobody drops looks hung.
 
 The library never runs the code on an unsuitable core and never starts a
@@ -287,8 +328,9 @@ Workbench argument's lock). The face turns those requests into OS calls on
 CPU0. The program's end
 is a completion; the anchor returns its code to the Shell.
 
-**Several images in one program.** A program built for more than one kind
-can ship as:
+**Several images in one program.** Since 5 October the module (one file,
+section 4) is the form; the drawer below stays readable for programs that
+ship that way. A program built for more than one kind can ship as:
 
 - **A drawer** (`Foo.omc/`): `Foo` (68k hunk, the anchor or the CPU0
   version), `Foo.ppc`, `Foo.arm`, `Foo.x86`, each ELF. No new file format; any
@@ -305,6 +347,15 @@ tool can show "Foo: PowerPC, core 2" and a program can tell how it was
 placed.
 
 ## 9. Changes to DESIGN.md
+
+**5 October 2026:** on ACSV boards a core says what it has through its
+board, not per-core registers: ISAS gives the instruction sets, and each
+service in the board's directory carries a manifest (instruction sets,
+memory, FPU, SIMD level such as SSE4.2, AVX2 or NEON) that the library reads
+with its name. Placement matches a module's `OMCP_NEEDS` and `OMCP_LEVEL`
+against that manifest; a board's 68k cores have ORIGIN 2 (emulated) and its
+native cores ORIGIN 0. The registers below are the 4 October proposal for
+the earlier board.
 
 Placing by feature needs each core to say what it has. The board-level
 `FEATURES` register doesn't, and placement also wants to know whether a core
@@ -342,23 +393,33 @@ separately, so each stands at its proposal below until we say otherwise.
 1. **The loader hook on by default?** Patching `LoadSeg` is what makes a
    launched program go where it needs to without the user doing anything. The
    proposal is on by default, with `OMCRun` for those who turn it off.
-2. **Drawer or one file for multi-image programs?** The proposal is the
-   drawer first, because it needs nothing new, and the one-file form once
-   `OMCMark` exists.
-3. **Hosted 68k programs on extra 68k cores?** The proposal is kernels only
-   for 68k in the first version, and hosted 68k as a later experiment.
+2. **Drawer or one file for multi-image programs?** Settled on 5 October
+   2026 by cores by instruction set: one file, the module (section 4); the
+   drawer stays readable.
+3. **Hosted 68k programs on extra 68k cores?** The proposal is kernels and
+   `OMC_Run68k` jobs only for 68k in the first version (the board's
+   `m68k.run/1`), and hosted 68k as a later experiment.
 4. **The `CAPS`, `LEVEL` and `ORIGIN` registers**, as section 9 sets them
    out, as OpenMulticore 1.1.
 5. **`SYS:Expansion` as the home of every core source** (`DESIGN.md` section
-   2). We decided this on 4 October 2026.
+   2). We decided this on 4 October 2026; since 5 October each source is a
+   board carrying the ACSV block.
+6. **Native code from the Amiga.** A native section is machine code for the
+   host, supplied by an Amiga program. The proposal: accept only sections our
+   Kitchen built and signed, until native jobs run in a helper process with
+   no files, no network and no other system calls (a seccomp sandbox), seeing
+   only the job's buffers; then signed or not, by the user's setting.
 
 ## 11. Phases
 
 Placement lands alongside the phases in `DESIGN.md`:
 
+Revised 5 October 2026 to `DESIGN.md` section 7's phases.
+
 | With phase | Placement delivers | Done when |
 | --- | --- | --- |
-| 1 | The kernel table and `OMC_SubmitKernel` for host-native kernels; `OMCMark` for hunk programs | A marked 68k program's maths kernel runs on a host core, and on CPU0 when the board is removed |
-| 2 | 68k kernels on extra 68k cores; `CAPS` and `LEVEL` | The same program picks a 68060-model core for a kernel that needs the FPU |
-| 3 | The loader hook, `OMCRun`, anchors; hosted PowerPC ELF; the WarpOS and PowerUP faces through it | A PowerPC ELF started from Workbench runs on the PowerPC core, and refuses cleanly without one |
-| 5 | Hosted ARM and x86 ELF | As each core kind appears |
+| 1 | `OMC_Run68k` and 68k kernels on the board's 68k cores, CPU0 as the fallback | A 68k kernel runs on a board core, and on CPU0 when the board is removed |
+| 2 | Modules: the kernel table, native sections in `"OMC1"` blocks, `OMCMark`, `OMC_SubmitKernel`, the default fallback list | One module's kernel runs on a board core or on CPU0, whichever is there |
+| 3 | Native x86-64 sections, signed, in the sandboxed helper; the manifest match | A module's x86-64 kernel runs on AmigaChrome's PC and its 68k kernel elsewhere |
+| 4 | Native ARM64 sections on the Pi | The same module's ARM64 kernel runs on the Pi |
+| Later | The loader hook, `OMCRun` and anchors for hosted native programs; PowerPC faces if PowerPC cores come | A hosted native program started from Workbench runs on its core, and from its 68k section without one |
