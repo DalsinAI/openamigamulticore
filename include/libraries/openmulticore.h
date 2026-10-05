@@ -30,7 +30,7 @@ struct OMCGrant {
 
 /* omj_Flags */
 #define OMCF_STRICT   (1UL << 0)   /* the job reads and runs only its grants and stack (needed over the LAN) */
-#define OMCF_NOWAIT   (1UL << 1)   /* a named core that is busy: fail with OMCERR_BUSY instead of waiting */
+#define OMCF_NOWAIT   (1UL << 1)   /* no free core (or the named one is busy): fail with OMCERR_BUSY instead of waiting */
 #define OMCF_NOBOARD  (1UL << 2)   /* never use a board: the main CPU only */
 #define OMCF_BOARD    (1UL << 3)   /* never the main CPU: fail with OMCERR_NOCORE when no core is there */
 
