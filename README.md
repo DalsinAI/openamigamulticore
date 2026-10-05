@@ -28,6 +28,31 @@ The design and the specification are in `DESIGN.md`. Status, 5 October 2026:
 specified, revised for cores by instruction set; AmigaChrome is building the
 cores board with 68k JIT cores first.
 
+## openmulticore.library 0.1
+
+The first version (5 October 2026) is in `library/`, with its header in
+`include/libraries/openmulticore.h`, the SFD, inline and proto headers, and
+`tools/omctest.c`. It runs a 68k function (`struct OMCJob`: registers,
+stack arguments, grants) on a core of a cores board through
+`openservice.device`'s `cpu.m68k/1` service, or on the main CPU when there is
+no board, the same function either way:
+
+- `OMC_Run68k(job)`, or `OMC_Submit(job)` then `OMC_Wait`, `OMC_Check`,
+  `OMC_Abort`;
+- `omj_Target`: `OMC_ANY` (the library chooses), `OMC_CPU0`, or
+  `OMC_CORE(board, n)`; for programs that leave it to the library, the
+  user's `ENV:OpenMulticore/Apps/<program>` (`OMC_CORE=...`) or
+  `ENV:OpenMulticore/Core` chooses;
+- `OMC_CoreCount`, `OMC_CoreInfo` (the board's cores and their load);
+- `OMC_GrantSeg`, so a strict job may run its program's own code.
+
+Build: `library/build.sh` with the os32 stove and a checkout of
+`openamigaservice` beside this one. Tested on a scratch OS 3.2.3 copy with
+AmigaChrome's cores board (`a1200native -C`): the main CPU, any core, a fault
+returned as a status, and a strict job all pass. Jobs aimed at a named core
+wait for the board to accept the core number (request bits 24 to 28), which
+the AC090 work is adding.
+
 ## Licence and credit
 
 OpenMulticore is free software under the MIT licence (`LICENSE`,
