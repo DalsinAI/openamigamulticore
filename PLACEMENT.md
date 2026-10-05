@@ -398,7 +398,7 @@ separately, so each stands at its proposal below until we say otherwise.
    drawer stays readable.
 3. **Hosted 68k programs on extra 68k cores?** The proposal is kernels and
    `OMC_Run68k` jobs only for 68k in the first version (the board's
-   `m68k.run/1`), and hosted 68k as a later experiment.
+   `cpu.m68k/1`), and hosted 68k as a later experiment.
 4. **The `CAPS`, `LEVEL` and `ORIGIN` registers**, as section 9 sets them
    out, as OpenMulticore 1.1.
 5. **`SYS:Expansion` as the home of every core source** (`DESIGN.md` section
