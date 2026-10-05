@@ -18,6 +18,59 @@ Exec. Its rules stand; OpenMulticore fixes what that note left open (the
 register offsets, the record layouts, the library) and opens it to other
 hardware.
 
+## 0. Cores by instruction set (5 October 2026)
+
+This section is the rule the rest of the document follows; where an older
+section disagrees, this one wins. We, 5 October 2026: "the cores should
+present themselves in two ways and advertise themselves as x86 / arm64 /
+m68k. Native functions can be built on non-m68k cores, so any application
+loaded on the Amiga must identify what kind of CPU it's for, and select a
+core. Also any services that will live on those cores must declare what
+they need. If no CPU is available for the kind of application, we fall back
+to an m68k JIT-style core", and "any cpu core can and must have an m68k jit
+option, but native execution is possible too".
+
+- **Every core runs 68k code, always, through a JIT** (a translated core,
+  not an interpreter, which stays only as a debugging switch). A core may
+  also run native code for its own instruction set: x86-64 on AmigaChrome's
+  PC, ARM64 on the Pi appliance and on a PiStorm's spare cores.
+- **Cores sit on AutoConfig boards that carry the ACSV block**, the one
+  protocol AmigaChrome's services card uses (Dalsin $DA15, MAGIC `'ACSV'`),
+  with CLASS 2 for cores. Dalsin's cores board is product 7. Two registers
+  follow CLASS: UNITS at `$24` (how many cores; every one runs 68k) and ISAS
+  at `$28` (bit 0 m68k, always set; bit 1 x86-64; bit 2 ARM64). The board's
+  directory lists `cpu.m68k/1`, plus `cpu.x86_64/1` or `cpu.arm64/1` when the
+  host allows native jobs; 68k jobs go through its `m68k.run/1` service. The
+  board, its rings and the host side are specified in AmigaChrome's
+  `CORES_BOARD.md`; any Amiga program finds the board through
+  expansion.library without our software.
+- **A program or job is a module**: a 68k section, always present (it is what
+  a real 68040 runs), and optional native sections for x86-64 and ARM64, one
+  file, the way a fat binary works. A plain Amiga executable is a module with
+  only its 68k section.
+- **Placement order:** a native section on a core of its instruction set;
+  else the 68k section on a board's core; else the 68k section on the main
+  CPU. A real Amiga with no board always has the last.
+- **Services declare what they need**: the instruction sets they have code
+  for, memory, and features (FPU, the SIMD level such as SSE4.2, AVX2 or
+  NEON). The directory returns that manifest with each name, so a board never
+  offers what its host can't run.
+- **Native code is the host's machine code**, so it is accepted only from
+  modules our Kitchen built and signed, until it runs in a separate helper
+  process with no files, no network and no other system calls (a seccomp
+  sandbox), seeing only the job's buffers.
+- **A core source is a board.** Each source in `SYS:Expansion` (section 2) is
+  a board carrying the ACSV block, whatever runs behind it.
+- **`openmulticore.library` lives in this repository**: guest code on top of
+  `openservice.device` (`DalsinAI/openamigaservice`), which finds the boards
+  and carries the messages, locally and to a paired Cradle over the LAN.
+
+What it changes below: section 3's register map is replaced by the ACSV
+board; the core kinds that matter first are 68k, x86-64 and ARM64 (PowerPC
+and RISC-V stay possible as further ISAS bits, later); host-native numbered
+functions become native sections; and the phases follow the cores board's
+build order (section 7).
+
 ## 1. The rules it keeps
 
 - **One Exec, on CPU0.** The motherboard CPU (or the trapdoor 68040 that
@@ -100,6 +153,13 @@ Risks on a stock OS 3.2.3:
 
 ## 3. The autoconfig board
 
+**Superseded on 5 October 2026 by the ACSV board (section 0).** Dalsin's
+cores board and any other maker's now present the ACSV block with CLASS 2,
+UNITS and ISAS, and their services in its directory (`CORES_BOARD.md` in
+AmigaChrome has the registers, rings and records). The register map below
+is the 4 October draft, kept as a record of the job and completion records'
+first shape; nothing implements it.
+
 64 KB IO window, longwords, big-endian. One board may present several cores;
 more boards (the next slot) add more.
 
@@ -178,6 +238,10 @@ what it needs from the OS it asks for through a completion request.
 
 ## 5. In AmigaChrome
 
+Since 5 October the order is the cores board's (section 0, and section 7):
+68k JIT cores first, then native x86-64 jobs in the sandboxed helper. The
+list below is the 4 October plan.
+
 - **The board:** OpenMulticore product 7 in the A1200 runtime's autoconfig
   chain, fitted from the instance's Hardware panel ("Extra cores").
 - **Host-native jobs first:** a pool of host threads running numbered
@@ -203,14 +267,17 @@ what it needs from the OS it asks for through a completion request.
 
 ## 7. Phases
 
+Revised 5 October 2026 to the cores board's build order (section 0). The
+board and the host side are AmigaChrome's; the library is this repository's.
+
 | Phase | Delivers | Done when |
 | --- | --- | --- |
-| 0 | The spec (this document, then `SPEC.md` in its repository): registers, records, the library's calls | Published, MIT |
-| 1 | The board in the runtime with host-native cores; `openmulticore.library` with jobs, grants, signals; a test program | A maths batch runs on host cores from OS 3.2.3 and the results match CPU0's |
-| 2 | Extra AC090 cores in host threads; `OMC_Run68k` | A 68k function runs on core 1 while CPU0 keeps Workbench running; the latch stops it |
-| 3 | A PowerPC core; `powerpc.library` and `ppc.library` faces | A WarpOS program runs |
-| 4 | The provider interface; a reference provider; notes for Emu68 | A provider registers and runs jobs |
-| 5 | AROS; `arm.library` and `x86.library` faces | As each core kind appears |
+| 0 | The spec: this document and `PLACEMENT.md`, with `CORES_BOARD.md` for the board | Published, MIT |
+| 1 | The cores board (ACSV CLASS 2, UNITS, ISAS) with `cpu.m68k/1` on translated AC090 cores; `openmulticore.library` on `openservice.device` with `OMC_Run68k`, grants and signals, and its main-CPU fallback | A 68k function runs on a board core while CPU0 keeps Workbench running, and the same call runs it on CPU0 with no board |
+| 2 | The module format (a 68k section and native sections in one file) and the library's choice and fallback | One module runs on a board core, and on a plain A1200 on CPU0 |
+| 3 | The sandboxed native helper and `cpu.x86_64/1`; Kitchen's signed native sections | A module's x86-64 section runs on AmigaChrome's PC, and its 68k section where no x86-64 core is |
+| 4 | `cpu.arm64/1` on the Pi appliance; notes for Emu68 on a PiStorm | The same module's ARM64 section runs on the Pi |
+| 5 | AROS; PowerPC and other ISAS bits, and the `powerpc.library` and `ppc.library` faces, if we take them up | As each appears |
 
 ## 8. Tests
 
@@ -225,4 +292,5 @@ what it needs from the OS it asks for through a completion request.
 How a launched program reaches the core it needs (ELF headers and an
 `"OpenMulticore"` note, marked hunk executables, a kernel table, overrides,
 fallbacks when a core is missing, and the loader) is in `PLACEMENT.md`.
-Specified 4 October 2026, not built.
+Specified 4 October 2026 and revised 5 October for cores by instruction
+set; not built.
