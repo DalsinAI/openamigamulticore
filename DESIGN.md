@@ -40,18 +40,63 @@ hardware.
   (PowerUP), and later `arm.library` and `x86.library`, sit on
   `openmulticore.library` when a core of that kind exists.
 
-## 2. Two ways to present cores
+## 2. Where cores come from: SYS:Expansion
 
-- **An autoconfig board** (section 3): the hardware way. OpenMulticore's
-  reference board is Dalsin $DA15, product 7 (the number ACMP reserved), IO,
-  64 KB. Another maker's board uses its own manufacturer and product and is
-  listed in `ENVARC:OpenMulticore/Boards` (manufacturer, product) so the
-  library looks at it; the library never reads an unknown board's registers.
-- **A provider** registered with `openmulticore.resource`: for systems whose
-  extra cores aren't on the Zorro bus, such as a PiStorm, where Emu68 owns the
-  Raspberry Pi's spare cores. The provider gives the library the same
-  per-core operations (start, ring, read status, latch) as calls instead of
-  registers.
+We, 4 October 2026: `SYS:Expansion` "is where we put the cores for the host
+CPU and or extra cores for PiStorms, native cores on Pis, RISC-V etc,
+including m68k emulated cores running on host cores."
+
+Every source of cores is a driver in `SYS:Expansion`, one icon each, and every
+driver does the same thing when it starts: finds its cores, describes each one
+(its kind, model, features and origin, section 3), and registers them with
+`openmulticore.resource`. The library and placement (`PLACEMENT.md`) see one
+list of cores and never care where a core came from. Adding a kind of core is
+adding a driver; nothing else changes.
+
+Drivers come in two kinds:
+
+- **Board drivers**, for cores behind an autoconfig board (section 3). The
+  icon carries `PRODUCT=manufacturer/product`, and `BindDrivers` starts the
+  driver when that board is present and unclaimed, the standard Amiga way.
+  The driver claims the board (clears `CDF_CONFIGME`) and registers its
+  cores. OpenMulticore's own reference board is Dalsin $DA15, product 7 (the
+  number ACMP reserved), IO, 64 KB, with the driver `OpenMulticore`
+  (`PRODUCT=55829/7`). Another maker's board ships its own driver under its own
+  manufacturer and product; the library never reads a board's registers
+  except through a driver that claimed it.
+- **Provider drivers**, for cores that aren't on the Zorro bus. They have no
+  board for `BindDrivers` to match, so their icon carries `OMC_PROVIDER` instead
+  of `PRODUCT`, and `C:OMCStart` (`PLACEMENT.md` section 8) runs every such
+  driver in `SYS:Expansion` after opening the library. A provider gives the
+  library the same per-core operations as the registers (start, ring, read
+  status, latch) as calls.
+
+What goes there, as each exists:
+
+| Driver | Cores it registers | Kind | Origin |
+| --- | --- | --- | --- |
+| `OpenMulticore` (board) | AmigaChrome's host-native cores: host threads running numbered functions | host-native | host |
+| `OpenMulticore` (board) | AmigaChrome's extra AC090 68k cores, emulated in host threads | 68k | emulated |
+| `OpenMulticore` (board) | AmigaChrome's PowerPC core (the PPC460 work) | PowerPC | emulated |
+| A PiStorm provider | The Raspberry Pi's spare cores, running jobs natively | ARM | native |
+| A PiStorm provider | Further 68k cores, Emu68 running them on spare Pi cores | 68k | emulated |
+| A RISC-V card's driver | Its RISC-V cores | RISC-V | native |
+| A PowerPC or ARM card's driver | Its cores, through its own board | PowerPC, ARM | native |
+| An FPGA board's driver | Soft cores (a 68k or RISC-V in the fabric) | 68k, RISC-V | FPGA |
+
+The PiStorm drivers are Emu68's to write; the spec and the resource are open
+for them.
+
+Risks on a stock OS 3.2.3:
+
+- `BindDrivers` runs partway through `S:Startup-Sequence`, so cores are never
+  there for anything that runs earlier, and nothing needed to boot may depend
+  on them.
+- A setup that removes `BindDrivers` gets no board drivers; `OMCStart` still
+  runs the providers, and CPU0 is always there.
+- A driver that finds nothing, or fails, exits quietly and leaves its board
+  unclaimed.
+- AROS's handling of `SYS:Expansion` drivers is still to be checked.
 
 ## 3. The autoconfig board
 
@@ -73,7 +118,7 @@ Core block:
 
 | Offset | Register | |
 | --- | --- | --- |
-| `+$00` | KIND | 0 none, 1 68k, 2 PowerPC, 3 ARM, 4 x86, 5 host-native |
+| `+$00` | KIND | 0 none, 1 68k, 2 PowerPC, 3 ARM, 4 x86, 5 host-native, 6 RISC-V |
 | `+$04` | MODEL | for a 68k the model ($020, $030, $040, $060); a PowerPC its PVR; and so on |
 | `+$08` | STATE | 0 off, 1 idle, 2 running, 3 latched, 4 faulted |
 | `+$0C` | DOORBELL | write: wake this core (the value is a reason, 1 = new jobs) |
@@ -149,7 +194,8 @@ what it needs from the OS it asks for through a completion request.
 ## 6. Elsewhere
 
 - **PiStorm:** Emu68 runs the 68k on one of the Pi's cores; the others could
-  be OpenMulticore cores through a provider (section 2). That is Emu68's work
+  be OpenMulticore cores through a provider driver in `SYS:Expansion`
+  (section 2), as native ARM cores or as further emulated 68k cores. That is Emu68's work
   to do; the spec and the library are open for it.
 - **Real cards:** a PowerPC or ARM card with shared RAM implements section 3
   in its logic or firmware, under its own manufacturer and product.
@@ -173,3 +219,10 @@ what it needs from the OS it asks for through a completion request.
 - The Amiga: a test program per phase on a scratch copy, comparing each core's
   results with CPU0's, and a stress run with the latch toggled.
 - Never on our validation instance until a phase passes on the copy.
+
+## 9. Placing applications
+
+How a launched program reaches the core it needs (ELF headers and an
+`"OpenMulticore"` note, marked hunk executables, a kernel table, overrides,
+fallbacks when a core is missing, and the loader) is in `PLACEMENT.md`.
+Specified 4 October 2026, not built.

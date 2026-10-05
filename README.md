@@ -7,12 +7,17 @@ FPGA board, a PowerPC or ARM card.
 
 - One Exec, on the motherboard CPU. Extra cores run jobs in shared memory,
   never the OS or the chipset.
-- An autoconfig board with a fixed register map (doorbell, latch, job and
-  completion rings), or a software provider for cores that aren't on Zorro.
+- Every source of cores is a driver in `SYS:Expansion`: an autoconfig board
+  with a fixed register map (doorbell, latch, job and completion rings), or a
+  provider for cores that aren't on Zorro. Host cores, a PiStorm's Pi cores,
+  RISC-V, and 68k cores emulated on the host all arrive the same way.
 - `openmulticore.library`: cores, memory grants, jobs, completion
   signals, `OMC_Run68k`, and batched maths. `powerpc.library` and
   `ppc.library` (WarpOS and PowerUP) sit on it as faces when a PowerPC core
   exists.
+- Placement: a launched program goes to the core it needs, read from its
+  ELF headers and an OpenMulticore note (or a marked hunk file), with
+  overrides and fallbacks when that core is missing (`PLACEMENT.md`).
 
 The design and the specification are in `DESIGN.md`. Status, 4 October 2026:
 specified; phase 1 (host-native cores in AmigaChrome) is next.
