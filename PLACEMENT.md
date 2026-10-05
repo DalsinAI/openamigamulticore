@@ -241,7 +241,10 @@ PowerPC card on one machine, host cores in AmigaChrome on another, and CPU0
 alone on a plain A1200, without any code that asks which is which.
 
 `OMC_Submit(core, &job)` from `DESIGN.md` stays for programs that want to
-choose.
+choose, and `OMC_SubmitKernel` takes the same target (`OMC_ANY`, `OMC_CPU0`
+or `OMC_CORE(board, n)`, `DESIGN.md` section 4): a kernel aimed at a named
+core runs there or waits for it, and never moves to another core unless the
+caller asked for any.
 
 ## 6. Overrides: settings, tooltypes and the command line
 
@@ -249,7 +252,7 @@ The same keywords in all three places:
 
 | Keyword | Meaning |
 | --- | --- |
-| `OMC_CORE` | `ANY`, a kind (`68K`, `PPC`, `ARM`, `X86`, `HOST`), or a core number |
+| `OMC_CORE` | `ANY`, `CPU0`, a kind (`68K`, `X86`, `ARM`; `PPC` and `HOST` from the 4 October draft), or a core as `board.core` (`1.3`: board 1's third core) |
 | `OMC_PIN` | `YES`: that core or nothing; otherwise a preference |
 | `OMC_FALLBACK` | Replaces the binary's fallback list (section 7) |
 | `OMC_EXCLUSIVE` | As the tag |
