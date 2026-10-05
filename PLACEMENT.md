@@ -7,7 +7,7 @@ How a program that is launched (from the Shell, Workbench, `Run` or
 there. It sits on `DESIGN.md`: the registers, records and library calls there
 are unchanged except where section 9 says so.
 
-Dale, 4 October 2026: "the multicore design must have a framework described to
+We, 4 October 2026: "the multicore design must have a framework described to
 enable launched applications to go where they need to, ELF should let us do
 quite a lot here."
 
@@ -336,8 +336,8 @@ both. The library adds `OMC_LoadApp`, `OMC_UnloadApp`, `OMC_AppInfo`,
 
 ## 10. Decisions
 
-Dale approved this framework on 4 October 2026 without ruling on these
-separately, so each stands at its proposal below until he says otherwise.
+We approved this framework on 4 October 2026 without ruling on these
+separately, so each stands at its proposal below until we say otherwise.
 
 1. **The loader hook on by default?** Patching `LoadSeg` is what makes a
    launched program go where it needs to without the user doing anything. The
@@ -350,7 +350,7 @@ separately, so each stands at its proposal below until he says otherwise.
 4. **The `CAPS`, `LEVEL` and `ORIGIN` registers**, as section 9 sets them
    out, as OpenMulticore 1.1.
 5. **`SYS:Expansion` as the home of every core source** (`DESIGN.md` section
-   2). Dale decided this on 4 October 2026.
+   2). We decided this on 4 October 2026.
 
 ## 11. Phases
 
