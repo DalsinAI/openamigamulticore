@@ -44,13 +44,18 @@ option, but native execution is possible too".
   board, its rings and the host side are specified in AmigaChrome's
   `CORES_BOARD.md`; any Amiga program finds the board through
   expansion.library without our software.
-- **A program or job is a module**: a 68k section, always present (it is what
-  a real 68040 runs), and optional native sections for x86-64 and ARM64, one
-  file, the way a fat binary works. A plain Amiga executable is a module with
-  only its 68k section.
-- **Placement order:** a native section on a core of its instruction set;
-  else the 68k section on a board's core; else the 68k section on the main
-  CPU. A real Amiga with no board always has the last.
+- **A file says its CPU by its format, with nothing added** (5 October
+  2026, following AROS): a hunk file is 68k; an ELF names its CPU in
+  `e_machine` (with AROS's `EI_OSABI` 15 for AROS programs), and runs on a
+  core of that CPU, or on a 68k core if it is 68k; a PowerPC ELF goes to a
+  PowerPC core. That is the base rule.
+- **A module is an optional extra**: a 68k hunk program carrying native ELF
+  sections for x86-64 and ARM64 in one file (`PLACEMENT.md` section 4), for
+  programs that want native parts and a 68k fallback together, the way a fat
+  binary works. A plain executable needs none of it.
+- **Placement order:** native code on a core of its instruction set; else
+  68k code (a hunk file, a 68k ELF, or a module's 68k section) on a board's
+  core; else on the main CPU. A real Amiga with no board always has the last.
 - **Services declare what they need**: the instruction sets they have code
   for, memory, and features (FPU, the SIMD level such as SSE4.2, AVX2 or
   NEON). The directory returns that manifest with each name, so a board never
