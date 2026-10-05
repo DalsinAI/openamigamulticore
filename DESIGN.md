@@ -59,6 +59,10 @@ option, but native execution is possible too".
   modules our Kitchen built and signed, until it runs in a separate helper
   process with no files, no network and no other system calls (a seccomp
   sandbox), seeing only the job's buffers.
+- **A caller may say which core** (5 October 2026: "we must allow
+  openmulticore to be told which to put it to"). Automatic placement stays
+  the default; a job may instead name a core, and the library sends it
+  there, waiting while that core is busy (section 4, "Choosing a core").
 - **A core source is a board.** Each source in `SYS:Expansion` (section 2) is
   a board carrying the ACSV block, whatever runs behind it.
 - **`openmulticore.library` lives in this repository**: guest code on top of
@@ -215,13 +219,28 @@ does it (a WarpOS-style bounce to the 68k) and rings the job on.
 
 What programs open. The faces open it too.
 
-- `OMC_CoreCount()`, `OMC_CoreInfo(n, &info)`: kind, model, state, the board.
+- `OMC_CoreCount()`, `OMC_CoreInfo(n, &info)`: kind, model, state, the board,
+  and since 5 October its load (below).
 - `OMC_AllocGrant(size, flags)`, `OMC_FreeGrant(g)`: memory every core may
   use (MEMF_PUBLIC, aligned to the largest cache line), with its physical
   ranges ready for a job.
 - `OMC_Submit(core, &job)`: queue a job (`OMC_ANY` lets the library pick an
   idle core of the right kind); returns an id. Pushes the grants, writes the
   record, then rings.
+- **Choosing a core** (5 October 2026). `OMC_Submit` and `OMC_Run68k`
+  take a target: `OMC_ANY` (the default: the library picks, least busy
+  first), `OMC_CPU0` (the main CPU), or `OMC_CORE(board, n)`, one named core.
+  A named core runs the job even when another is idle: a job aimed at a busy
+  core waits for it, and `OMCF_NOWAIT` makes it fail with `OMCERR_BUSY`
+  instead. A named core that can't run the job (no such core, or a native
+  section for another instruction set) fails with `OMCERR_NOCORE`; it never
+  moves elsewhere silently. On the cores board the target travels in the
+  request's bits 24 to 28 (0 any free core, 1 to 8 that core), and
+  `OMC_CoreInfo` reads the board's read-only load registers: jobs queued
+  (`$2C`), and from `$100`, 16 bytes a core: state (idle, 68k, native), load
+  over the last second (0 to 1000), jobs finished, and the host CPU the core
+  is pinned to. These offsets are the AC090 thread's proposal, 5 October
+  2026, and follow `CORES_BOARD.md` when it settles them.
 - `OMC_Check(id)`, `OMC_Wait(id)`, and a signal on completion
   (`OMC_SetSignal`), from the level 2 server.
 - `OMC_Run68k(func, args, n)`: the common case in one call, run a 68k
