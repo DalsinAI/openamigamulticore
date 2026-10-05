@@ -21,10 +21,13 @@ section 0, which wins where this document still disagrees). In short:
   code for its own instruction set: x86-64 on a PC, ARM64 on a Pi. Cores sit
   on ACSV boards (CLASS 2); UNITS at `$24` says how many, ISAS at `$28` which
   instruction sets (bit 0 m68k, always; bit 1 x86-64; bit 2 ARM64).
-- A program or job is a **module**: a 68k section that is always there, and
-  optional native sections, in one file (section 4).
-- Placement order: a native section on a core of its instruction set, then
-  the 68k section on a board's core, then the main CPU. A real Amiga with no
+- A file says its CPU by its format, with nothing added (AROS's way): a hunk
+  file is 68k, an ELF names its CPU in `e_machine` (`EI_OSABI` 15 for AROS
+  programs), and a PowerPC ELF goes to a PowerPC core. A **module** (a 68k
+  hunk program with native sections in one file, section 4) is an optional
+  extra for programs that want native parts and a 68k fallback together.
+- Placement order: native code on a core of its instruction set, then 68k
+  code on a board's core, then the main CPU. A real Amiga with no
   board runs the 68k section on its own CPU.
 - Services that live on cores declare what they need: instruction sets,
   memory, FPU and SIMD level (section 9).
@@ -186,7 +189,9 @@ the note can grow.
 
 Classic 68k programs keep the hunk format; nothing here makes them rebuild.
 
-**A module is a hunk program with native sections in it** (5 October 2026):
+**A module is a hunk program with native sections in it** (5 October 2026,
+an optional extra: a plain hunk file or ELF is placed by its format alone,
+section 3):
 its hunks are the 68k section, which every core and every Amiga can run, and
 each native section is an ELF image in an `"OMC1"` debug block (type
 `OMC_NT_KERNELS` for kernels, or a whole program's image), with the kernel
