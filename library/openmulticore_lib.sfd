@@ -1,0 +1,19 @@
+==id $Id: openmulticore_lib.sfd 0.1 (5.10.2026) $
+* "openmulticore.library"
+==base _OpenMulticoreBase
+==basetype struct Library *
+==libname openmulticore.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <dos/dos.h>
+==include <libraries/openmulticore.h>
+ULONG OMC_CoreCount()()
+BOOL OMC_CoreInfo(ULONG core, struct OMCCoreInfo *info)(d0,a0)
+LONG OMC_Run68k(struct OMCJob *job)(a0)
+LONG OMC_Submit(struct OMCJob *job)(a0)
+LONG OMC_Wait(struct OMCJob *job)(a0)
+BOOL OMC_Check(struct OMCJob *job)(a0)
+VOID OMC_Abort(struct OMCJob *job)(a0)
+ULONG OMC_GrantSeg(struct OMCJob *job, BPTR seglist, ULONG mode)(a0,d0,d1)
+==end
