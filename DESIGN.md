@@ -40,7 +40,7 @@ option, but native execution is possible too".
   follow CLASS: UNITS at `$24` (how many cores; every one runs 68k) and ISAS
   at `$28` (bit 0 m68k, always set; bit 1 x86-64; bit 2 ARM64). The board's
   directory lists `cpu.m68k/1`, plus `cpu.x86_64/1` or `cpu.arm64/1` when the
-  host allows native jobs; 68k jobs go through its `m68k.run/1` service. The
+  host allows native jobs; 68k jobs open `cpu.m68k/1` (RUN, RUNX, INFO, CANCEL) and native jobs `cpu.x86_64/1` or `cpu.arm64/1`. The
   board, its rings and the host side are specified in AmigaChrome's
   `CORES_BOARD.md`; any Amiga program finds the board through
   expansion.library without our software.
