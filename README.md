@@ -65,3 +65,7 @@ implementation say it is based on OpenMulticore by Dalsin Limited.
 
 OpenMulticore was created by Dalsin Limited, for
 AmigaChrome.
+
+## Contributors
+
+OpenMulticore is created and maintained by [SacredTrees](https://github.com/SacredTrees) with the AmigaChrome agent team, copyright Dalsin Limited. Everyone whose work it includes is credited in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
