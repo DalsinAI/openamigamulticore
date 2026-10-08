@@ -8,7 +8,7 @@ FPGA board, a PowerPC or ARM card.
 - One Exec, on the motherboard CPU. Extra cores run jobs in shared memory,
   never the OS or the chipset.
 - Every core runs 68k code through a JIT, and may also run native code for
-  its own instruction set (x86-64 on a PC, ARM64 on a Pi). Cores sit on
+  its own instruction set (x86-64, or ARM64 on a Pi). Cores sit on
   AutoConfig boards carrying the ACSV block (CLASS 2), which say how many
   cores they have and which instruction sets.
 - A program is a module: a 68k section, always there, and optional native

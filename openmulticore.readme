@@ -12,7 +12,7 @@ The motherboard CPU keeps Exec and the custom chips; extra cores run jobs in
 shared memory and hand anything the OS must do back to it.
 
 Every core runs 68k code, and a core may also run native code for its own
-CPU (x86-64 on a PC, ARM64 on a Raspberry Pi). Cores sit on autoconfig boards
+CPU (x86-64, or ARM64 on a Raspberry Pi). Cores sit on autoconfig boards
 that carry one published register block and say how many cores they have and
 which instruction sets. A program is one file with a 68k part and optional
 native parts; the library runs a native part on a matching core, else the
@@ -25,8 +25,8 @@ and batches of maths. powerpc.library and ppc.library (WarpOS and PowerUP) can
 sit on top as faces when a PowerPC core exists.
 
 Status: this archive is the specification. The library and AmigaChrome's board
-follow; AmigaChrome (an Amiga for the PC) implements it first, with 68k cores
-that run on the host.
+follow; AmigaChrome (an Amiga on x86 and ARM64 cores) implements it first,
+with 68k cores that run on them.
 
 Free software under the MIT licence, Copyright (c) 2026 Dalsin Limited. Use
 it, change it, fork it and ship it; keep the copyright notice and the licence
