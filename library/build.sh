@@ -14,9 +14,9 @@ CC=${CC:-$STOVE/prefix/bin/m68k-amigaos-gcc}
 OS=${OPENSERVICE:-$ROOT/../openamigaservice}
 OUT=${1:-$ROOT/build}
 mkdir -p "$OUT"
-"$CC" -m68020 -O2 -fomit-frame-pointer -fno-toplevel-reorder -fno-builtin -Wall -Wextra -Werror -Wno-unused-parameter \
+"$CC" -m68020 -O2 -fno-delete-null-pointer-checks -fomit-frame-pointer -fno-toplevel-reorder -fno-builtin -Wall -Wextra -Werror -Wno-unused-parameter \
     -nostartfiles -nostdlib -I"$ROOT/include" -I"$OS/include" \
     -o "$OUT/openmulticore.library" "$HERE/openmulticore_lib.c" -lgcc
 echo "$OUT/openmulticore.library ($(wc -c < "$OUT/openmulticore.library") bytes)"
-"$CC" -m68020 -O2 -Wall -Werror -Wno-pointer-sign -noixemul -I"$ROOT/include" -o "$OUT/OMCTest" "$ROOT/tools/omctest.c"
+"$CC" -m68020 -O2 -fno-delete-null-pointer-checks -Wall -Werror -Wno-pointer-sign -noixemul -I"$ROOT/include" -o "$OUT/OMCTest" "$ROOT/tools/omctest.c"
 echo "$OUT/OMCTest ($(wc -c < "$OUT/OMCTest") bytes)"
