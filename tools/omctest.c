@@ -144,7 +144,7 @@ int main(void)
     /* the board's counters after the work */
     for (ULONG n = 1; n <= units; n++)
         if (OMC_CoreInfo(n, &ci))
-            Printf((STRPTR)"  after: core %ld state %ld, load %ld, done %ld, host CPU %ld\n", n, ci.oci_State, ci.oci_Load, ci.oci_JobsDone, (LONG)ci.oci_HostCPU);
+            Printf((STRPTR)"  after: core %ld state %ld, load %ld, done %ld, x86 or ARM64 CPU %ld\n", n, ci.oci_State, ci.oci_Load, ci.oci_JobsDone, (LONG)ci.oci_HostCPU);
     Printf((STRPTR)"%s\n", (LONG)(bad ? "FAIL" : "PASS"));
     FreeVec(data);
     CloseLibrary(OpenMulticoreBase);
