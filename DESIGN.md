@@ -222,16 +222,29 @@ does it (a WarpOS-style bounce to the 68k) and rings the job on.
 
 ## 4. openmulticore.library
 
-What programs open. The faces open it too.
+What programs open. The faces open it too. The calls as built are in
+`include/libraries/openmulticore.h`, `library/openmulticore_lib.sfd` and
+`library/openmulticore.doc`; this section follows them (8 October 2026: the
+first draft's `OMC_Submit(core, &job)` returning an id, and
+`OMC_Run68k(func, args, n)`, became the job-based calls below).
+
+Built (0.1, 5 October 2026):
 
 - `OMC_CoreCount()`, `OMC_CoreInfo(n, &info)`: kind, model, state, the board,
   and since 5 October its load (below).
-- `OMC_AllocGrant(size, flags)`, `OMC_FreeGrant(g)`: memory every core may
-  use (MEMF_PUBLIC, aligned to the largest cache line), with its physical
-  ranges ready for a job.
-- `OMC_Submit(core, &job)`: queue a job (`OMC_ANY` lets the library pick an
-  idle core of the right kind); returns an id. Pushes the grants, writes the
-  record, then rings.
+- `OMC_Submit(&job)`: start a job (`struct OMCJob`: the entry, registers,
+  stack arguments, up to 16 grants, the target in `omj_Target`). Returns
+  `OMCERR_OK` or why not; the job itself is the handle, not an id. Pushes
+  the grants, writes the record, then rings. A job for the main CPU has run
+  when it returns.
+- `OMC_Check(&job)`, `OMC_Wait(&job)`: done yet, and collect (one
+  `OMC_Wait` for each `OMC_Submit`).
+- `OMC_Abort(&job)`: ask the board to stop it; `OMC_Wait` then says
+  `OMCERR_CANCEL` (0.2; 0.1 said `OMCERR_LOST`).
+- `OMC_Run68k(&job)`: the common case in one call, `OMC_Submit` and
+  `OMC_Wait` (the `RunPPC` of OpenMulticore).
+- `OMC_GrantSeg(&job, seglist, mode)`: grant a loaded program's hunks, for
+  strict jobs.
 - **Choosing a core** (5 October 2026). `OMC_Submit` and `OMC_Run68k`
   take a target: `OMC_ANY` (the default: the library picks, least busy
   first), `OMC_CPU0` (the main CPU), or `OMC_CORE(board, n)`, one named core.
@@ -248,10 +261,31 @@ What programs open. The faces open it too.
   the jobs named for it before any-core jobs, and `OMCF_NOWAIT` also works
   for `OMC_ANY`: the job fails with `OMCERR_BUSY` when no core is free, and
   when it is admitted it holds the idle core it was given.
-- `OMC_Check(id)`, `OMC_Wait(id)`, and a signal on completion
-  (`OMC_SetSignal`), from the level 2 server.
-- `OMC_Run68k(func, args, n)`: the common case in one call, run a 68k
-  function on another 68k core and wait (the `RunPPC` of OpenMulticore).
+Built (0.2, 8 October 2026), at the end of the table, so 0.1 programs keep
+working; the version stays 0, so a program checks `OMC_HAS_JOBCALLS(base)`
+(revision 2 or later) before calling them:
+
+- `OMC_JobInit(&job)`: clear the job and write the defaults (`OMC_ANY`,
+  16 KB stack, 10 s timeout).
+- `OMC_AddGrant(&job, addr, length, mode)`: add a grant, refusing at once
+  what a board would refuse at submit: a 17th grant or a third written one
+  (`OMCERR_NOSLOT`), a written grant off whole 16-byte cache lines or an
+  overlap with a written grant (`OMCERR_BADGRANT`), and Chip RAM for a job
+  that must reach a board (`OMCERR_CHIPRAM`; for an `OMC_ANY` job it keeps
+  the job on the main CPU).
+- `OMC_AllocGrant(size, flags)`, `OMC_FreeGrant(mem)`: memory every core may
+  use: `MEMF_PUBLIC`, Fast RAM when there is any, aligned to and rounded up to
+  64-byte lines (the largest cache line in play), or to 4 KB pages with
+  `OMCAF_PAGE`.
+- `OMC_SetSignal(&job, task, sigmask)`: a signal on completion. The task is
+  signalled when the job can be collected (from the board's reply, or by
+  `OMC_Submit` itself when the job ran on the main CPU or was refused), so a
+  main loop `Wait()`s on its windows and its jobs together. Jobs share the
+  one signal and hold no signal bit of their own; without it each job on a
+  board holds one of the submitting task's until `OMC_Wait`.
+
+Designed, not built:
+
 - `OMC_Latch(on)`: what a game, or `Forbid`-heavy code, uses to stop the
   extra cores.
 - A batch interface for maths (We, the same day: "it should allow a maths
@@ -260,7 +294,9 @@ What programs open. The faces open it too.
   to OpenGPU where a GPU exists (Open RTG's design, section 5).
 
 Rules for code on another core: no OS calls, no chipset, only its grants;
-what it needs from the OS it asks for through a completion request.
+what it needs from the OS it asks for through a completion request. How to
+port threaded programs to these rules: amigachrome
+`docs/development/HowTo-Port-Threads-To-OpenMulticore.md`.
 
 ## 5. In AmigaChrome
 

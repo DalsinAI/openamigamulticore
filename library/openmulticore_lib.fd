@@ -1,0 +1,20 @@
+* "openmulticore.library" 0.2 (8.10.2026), from openmulticore_lib.sfd
+* MIT, Copyright (c) 2026 Dalsin Limited.
+##base _OpenMulticoreBase
+##bias 30
+##public
+OMC_CoreCount()()
+OMC_CoreInfo(core,info)(d0,a0)
+OMC_Run68k(job)(a0)
+OMC_Submit(job)(a0)
+OMC_Wait(job)(a0)
+OMC_Check(job)(a0)
+OMC_Abort(job)(a0)
+OMC_GrantSeg(job,seglist,mode)(a0,d0,d1)
+* 0.2
+OMC_JobInit(job)(a0)
+OMC_AddGrant(job,addr,length,mode)(a0,a1,d0,d1)
+OMC_AllocGrant(size,flags)(d0,d1)
+OMC_FreeGrant(mem)(a0)
+OMC_SetSignal(job,task,sigmask)(a0,a1,d0)
+##end

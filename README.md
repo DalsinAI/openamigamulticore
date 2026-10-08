@@ -46,6 +46,22 @@ no board, the same function either way:
 - `OMC_CoreCount`, `OMC_CoreInfo` (the board's cores and their load);
 - `OMC_GrantSeg`, so a strict job may run its program's own code.
 
+## openmulticore.library 0.2
+
+0.2 (8 October 2026) adds five calls at the end of the table; 0.1 programs
+keep working, and a program checks `OMC_HAS_JOBCALLS(OpenMulticoreBase)`
+before it uses them:
+
+- `OMC_JobInit`: a cleared job with the defaults;
+- `OMC_AddGrant`: a grant, with the board's rules checked as it is added;
+- `OMC_AllocGrant`, `OMC_FreeGrant`: memory right for a grant;
+- `OMC_SetSignal`: a signal when a job can be collected, so a program waits
+  on its windows and its jobs together, with no signal bit held per job.
+
+`OMC_Wait` after `OMC_Abort` now says `OMCERR_CANCEL`. The calls are
+described in `library/openmulticore.doc`; `library/openmulticore_lib.fd` is
+there for other compilers. `tools/omctest.c` tests each of them.
+
 Build: `library/build.sh` with the os32 stove and a checkout of
 `openamigaservice` beside this one. Tested on a scratch OS 3.2.3 copy with
 AmigaChrome's cores board (`a1200native -C`): the main CPU, any core, a fault

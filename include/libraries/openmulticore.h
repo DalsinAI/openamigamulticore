@@ -1,13 +1,24 @@
-/* openmulticore.library 0.1: run 68k functions on extra cores, or on the
- * main CPU when there are none (DESIGN.md sections 0 and 4).
+/* openmulticore.library 0.2: run 68k functions on extra cores, or on the
+ * main CPU when there are none (DESIGN.md sections 0 and 4). 0.2 adds
+ * OMC_JobInit, OMC_AddGrant, OMC_AllocGrant, OMC_FreeGrant and
+ * OMC_SetSignal (library/openmulticore.doc).
  * MIT, Copyright (c) 2026 Dalsin Limited. */
 #ifndef LIBRARIES_OPENMULTICORE_H
 #define LIBRARIES_OPENMULTICORE_H
 
 #include <exec/types.h>
+#include <exec/tasks.h>
+#include <exec/libraries.h>
 
 #define OPENMULTICORE_NAME    "openmulticore.library"
 #define OPENMULTICORE_VERSION 0
+#define OPENMULTICORE_REVISION_JOBCALLS 2   /* 0.2: the five calls below */
+
+/* The library opened is 0.2 or later: OMC_JobInit, OMC_AddGrant,
+ * OMC_AllocGrant, OMC_FreeGrant and OMC_SetSignal are there. The version
+ * stays 0, so OpenLibrary can't ask for them: check before calling. */
+#define OMC_HAS_JOBCALLS(base) \
+    ((base) && ((base)->lib_Version > OPENMULTICORE_VERSION || (base)->lib_Revision >= OPENMULTICORE_REVISION_JOBCALLS))
 
 /* Memory a job may use besides its stack, by address and length. */
 struct OMCGrant {
@@ -20,6 +31,19 @@ struct OMCGrant {
 #define OMCG_EXEC  4
 
 #define OMC_MAXGRANTS 16
+#define OMC_MAXWRITTEN 2            /* grants with OMCG_WRITE a job may have */
+#define OMC_GRANTALIGN 16           /* a written grant covers whole 68k cache lines: its address and length */
+#define OMC_GRANTSIZE(n) (((ULONG)(n) + OMC_GRANTALIGN - 1) & ~(ULONG)(OMC_GRANTALIGN - 1))
+
+/* OMC_AllocGrant's flags */
+#define OMCAF_CLEAR (1UL << 0)      /* zeroed */
+#define OMCAF_PAGE  (1UL << 1)      /* on its own 4 KB pages, not only its own cache lines */
+#define OMC_ALLOCALIGN 64           /* OMC_AllocGrant's alignment and size step (the largest cache line in play) */
+#define OMC_PAGESIZE   4096
+
+/* What OMC_JobInit sets */
+#define OMC_DEFAULTSTACK   16384
+#define OMC_DEFAULTTIMEOUT 10000    /* ms: the board's own default */
 
 /* Where a job runs (omj_Target). */
 #define OMC_ANY            0UL                    /* the library chooses (the default) */
@@ -44,6 +68,9 @@ struct OMCGrant {
 #define OMCERR_BUSY    (-21)       /* the named core is busy and OMCF_NOWAIT was set */
 #define OMCERR_NOMEM   (-22)
 #define OMCERR_LOST    (-23)       /* openservice.device lost the board */
+#define OMCERR_BADGRANT (-24)      /* OMC_AddGrant: no address or length, no mode, a written grant off a cache line, or overlapping a written one */
+#define OMCERR_CHIPRAM  (-25)      /* OMC_AddGrant: Chip RAM for a job that must run on a board */
+#define OMCERR_NOSLOT   (-26)      /* OMC_AddGrant: OMC_MAXGRANTS grants, or OMC_MAXWRITTEN written ones, already */
 
 /* omj_Where, after the job */
 #define OMCW_CPU0  1

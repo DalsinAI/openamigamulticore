@@ -1,15 +1,18 @@
 /* Copyright (c) 2026 Dalsin Limited. OpenMulticore, MIT licence (LICENSE).
  * SPDX-License-Identifier: MIT
  *
- * openmulticore.library 0.1: the first version (DESIGN.md sections 0 and
- * 4). It runs a 68k function on a core of a cores board (AmigaChrome's, a
- * Dalsin $DA15 board carrying the ACSV block, CLASS 2, product 7) through
+ * openmulticore.library 0.2 (DESIGN.md sections 0 and 4). It runs a 68k
+ * function on a core of a cores board (AmigaChrome's, a Dalsin $DA15
+ * board carrying the ACSV block, CLASS 2, product 7) through
  * openservice.device's cpu.m68k/1 service, or on the main CPU when there is
  * no board, the same function either way. A caller may name the core
  * (OMC_CORE), ask for the main CPU (OMC_CPU0) or leave it to the library
  * (OMC_ANY); the user's settings in ENV:OpenMulticore choose for programs
  * that leave it (PLACEMENT.md section 6). Modules and native sections come
- * later.
+ * later. 0.2 adds, at the end of the table: OMC_JobInit, OMC_AddGrant
+ * (the grant rules checked as each is added), OMC_AllocGrant and
+ * OMC_FreeGrant (memory right for a grant), and OMC_SetSignal (a signal
+ * when a job can be collected, with no signal bit held per job).
  *
  * Built bare by library/build.sh (no startup code, no C library).
  */
@@ -21,6 +24,7 @@
 #include <exec/tasks.h>
 #include <exec/ports.h>
 #include <exec/io.h>
+#include <exec/errors.h>
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <dos/var.h>
@@ -35,7 +39,7 @@
 
 #define REG(r, decl) register decl __asm(#r)   /* bebbo gcc: an argument in a register */
 #define LIB_VERSION 0
-#define LIB_REVISION 1
+#define LIB_REVISION 2
 
 #define DALSIN        0xDA15
 #define CORES_PRODUCT 7
@@ -57,10 +61,16 @@
 #define P_PORT    2
 #define P_BLOCK   3
 #define P_STACK   4
-#define P_SSIZE   5
+#define P_SIGMASK 5                 /* OMC_SetSignal's mask, or 0 */
 #define P_SWAP    6                 /* a StackSwapStruct: 6, 7, 8 */
 #define P_FPU     9
-#define P_OPEN    10                /* the service is open on P_IO */
+#define P_OPEN    10                /* OPEN_ bits */
+#define P_SIGTASK 11                /* OMC_SetSignal's task */
+
+#define OPEN_SERVICE 1              /* the service is open on P_IO */
+#define OPEN_SIGPORT 2              /* P_PORT is the signal port: the job holds no signal bit of its own */
+
+#define GRANT_MAGIC 0x4F4D4347UL    /* 'OMCG': OMC_AllocGrant's header, just below the memory */
 
 struct OMCBase {
     struct Library lib;
@@ -74,7 +84,7 @@ struct DosLibrary *DOSBase;
 int start(void) { return -1; }      /* run as a program: nothing (stays first in the file) */
 
 static const char lib_name[] = OPENMULTICORE_NAME;
-static const char lib_id[] = "openmulticore.library 0.1 (5.10.2026) OpenMulticore, Dalsin Limited\r\n";
+static const char lib_id[] = "openmulticore.library 0.2 (8.10.2026) OpenMulticore, Dalsin Limited\r\n";
 static const char service_name[] = "cpu.m68k/1";
 
 static struct Library *lib_init(REG(d0, struct OMCBase *base), REG(a0, BPTR seglist), REG(a6, struct ExecBase *sys));
@@ -90,11 +100,19 @@ static LONG OMC_Wait(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base))
 static BOOL OMC_Check(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base));
 static void OMC_Abort(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base));
 static ULONG OMC_GrantSeg(REG(a0, struct OMCJob *job), REG(d0, BPTR seglist), REG(d1, ULONG mode), REG(a6, struct OMCBase *base));
+static void OMC_JobInit(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base));
+static LONG OMC_AddGrant(REG(a0, struct OMCJob *job), REG(a1, APTR addr), REG(d0, ULONG length), REG(d1, ULONG mode), REG(a6, struct OMCBase *base));
+static APTR OMC_AllocGrant(REG(d0, ULONG size), REG(d1, ULONG flags), REG(a6, struct OMCBase *base));
+static void OMC_FreeGrant(REG(a0, APTR mem), REG(a6, struct OMCBase *base));
+static LONG OMC_SetSignal(REG(a0, struct OMCJob *job), REG(a1, struct Task *task), REG(d0, ULONG sigmask), REG(a6, struct OMCBase *base));
 
 static const APTR lib_vectors[] = {
     (APTR)lib_open, (APTR)lib_close, (APTR)lib_expunge, (APTR)lib_null,
     (APTR)OMC_CoreCount, (APTR)OMC_CoreInfo, (APTR)OMC_Run68k, (APTR)OMC_Submit,
-    (APTR)OMC_Wait, (APTR)OMC_Check, (APTR)OMC_Abort, (APTR)OMC_GrantSeg, (APTR)-1,
+    (APTR)OMC_Wait, (APTR)OMC_Check, (APTR)OMC_Abort, (APTR)OMC_GrantSeg,
+    /* 0.2: new calls only ever go on the end */
+    (APTR)OMC_JobInit, (APTR)OMC_AddGrant, (APTR)OMC_AllocGrant, (APTR)OMC_FreeGrant, (APTR)OMC_SetSignal,
+    (APTR)-1,
 };
 static const struct { ULONG size; const APTR *vectors; APTR data; APTR init; } lib_inittable = {
     sizeof(struct OMCBase), lib_vectors, NULL, (APTR)lib_init,
@@ -161,19 +179,61 @@ static volatile UBYTE *cores_board(void)
 
 /* ---- the board, through openservice.device ------------------------------------- */
 
+/* A port on the signal OMC_SetSignal gave: no signal bit of its own. */
+static struct MsgPort *signal_port(struct OMCJob *job)
+{
+    struct MsgPort *mp = AllocMem(sizeof *mp, MEMF_PUBLIC | MEMF_CLEAR);
+    ULONG mask = job->omj_Private[P_SIGMASK];
+    UBYTE bit = 0;
+    if (!mp) return NULL;
+    while (!(mask & 1)) { mask >>= 1; bit++; }
+    mp->mp_Node.ln_Type = NT_MSGPORT;
+    mp->mp_Flags = PA_SIGNAL;
+    mp->mp_SigBit = bit;
+    mp->mp_SigTask = (struct Task *)job->omj_Private[P_SIGTASK];
+    mp->mp_MsgList.lh_Head = (struct Node *)&mp->mp_MsgList.lh_Tail;   /* NewList, which is amiga.lib's */
+    mp->mp_MsgList.lh_Tail = NULL;
+    mp->mp_MsgList.lh_TailPred = (struct Node *)&mp->mp_MsgList.lh_Head;
+    mp->mp_MsgList.lh_Type = NT_MESSAGE;
+    return mp;
+}
+
+/* After the library itself waited on a shared signal, it may have taken a
+ * signal another job raised: give it back, so the task's own Wait() still
+ * sees it (at worst one wake-up with nothing new). */
+static void signal_again(struct OMCJob *job)
+{
+    ULONG mask = job->omj_Private[P_SIGMASK];
+    if (mask) Signal((struct Task *)job->omj_Private[P_SIGTASK], mask);
+}
+
 static void board_close(struct OMCJob *job)
 {
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     struct MsgPort *port = (struct MsgPort *)job->omj_Private[P_PORT];
+    ULONG open = job->omj_Private[P_OPEN];
     if (io) {
-        if (io->os_Req.io_Device && job->omj_Private[P_OPEN]) {
-            io->os_Req.io_Command = OSCMD_CLOSE;           /* the service's handle back */
-            DoIO((struct IORequest *)io);
+        if (io->os_Req.io_Device && (open & OPEN_SERVICE)) {
+            struct MsgPort *tmp = NULL;
+            int ok = 1;
+            if (open & OPEN_SIGPORT) {                     /* wait on a port of this task's own */
+                if ((tmp = CreateMsgPort())) io->os_Req.io_Message.mn_ReplyPort = tmp;
+                else ok = FindTask(NULL) == port->mp_SigTask;
+            }
+            if (ok) {
+                io->os_Req.io_Command = OSCMD_CLOSE;       /* the service's handle back */
+                DoIO((struct IORequest *)io);
+                if ((open & OPEN_SIGPORT) && !tmp) signal_again(job);
+            }
+            if (tmp) DeleteMsgPort(tmp);
         }
         if (io->os_Req.io_Device) CloseDevice((struct IORequest *)io);
         DeleteIORequest((struct IORequest *)io);
     }
-    if (port) DeleteMsgPort(port);
+    if (port) {
+        if (open & OPEN_SIGPORT) FreeMem(port, sizeof *port);
+        else DeleteMsgPort(port);
+    }
     job->omj_Private[P_IO] = job->omj_Private[P_PORT] = job->omj_Private[P_OPEN] = 0;
 }
 
@@ -197,10 +257,20 @@ static LONG board_open(struct OMCJob *job)
     DoIO((struct IORequest *)io);
     if (io->os_Req.io_Error || io->os_Status) { board_close(job); return -1; }
     io->os_Service = (UWORD)io->os_Result;
-    job->omj_Private[P_OPEN] = 1;
+    job->omj_Private[P_OPEN] = OPEN_SERVICE;
     io->os_Req.io_Command = OSCMD_WHERE;
     DoIO((struct IORequest *)io);
     job->omj_Where = io->os_Result == OSWHERE_LAN ? OMCW_LAN : OMCW_BOARD;
+    if (job->omj_Private[P_SIGMASK]) {
+        /* the job's answer comes to a port on the caller's signal; the port
+         * made above, and its signal bit, go back now */
+        struct MsgPort *sp = signal_port(job);
+        if (!sp) { board_close(job); return -1; }
+        io->os_Req.io_Message.mn_ReplyPort = sp;
+        DeleteMsgPort(port);
+        job->omj_Private[P_PORT] = (ULONG)sp;
+        job->omj_Private[P_OPEN] |= OPEN_SIGPORT;
+    }
     return io->os_Service;
 }
 
@@ -288,8 +358,16 @@ static LONG board_finish(struct OMCJob *job)
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     const UBYTE *rb = (const UBYTE *)job->omj_Private[P_BLOCK];
     LONG status;
-    WaitIO((struct IORequest *)io);
-    status = io->os_Req.io_Error ? OMCERR_LOST : io->os_Status;
+    if (job->omj_Private[P_OPEN] & OPEN_SIGPORT) {
+        struct MsgPort *sp = (struct MsgPort *)job->omj_Private[P_PORT];
+        if (!CheckIO((struct IORequest *)io)) {
+            if (FindTask(NULL) != sp->mp_SigTask) return OMCERR_BADJOB;   /* only the signalled task can wait on it; the job stays */
+            WaitIO((struct IORequest *)io);
+            signal_again(job);
+        } else WaitIO((struct IORequest *)io);                            /* done: takes the reply off the port */
+    } else WaitIO((struct IORequest *)io);
+    status = io->os_Req.io_Error == IOERR_ABORTED ? OMCERR_CANCEL       /* OMC_Abort */
+           : io->os_Req.io_Error ? OMCERR_LOST : io->os_Status;
     if (status == -1 || status == -9) status = OMCERR_NOCORE;   /* no such service; a core past UNITS */
     else if (status == -8) status = OMCERR_BUSY;                /* the named core was taken (no wait) */
     if (rb) {
@@ -518,14 +596,20 @@ static LONG OMC_Run68k(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base
 {
     LONG r;
     if (!job || !job->omj_Entry) return OMCERR_BADJOB;
+    if (job->omj_Private[P_SIGMASK] && (struct Task *)job->omj_Private[P_SIGTASK] != FindTask(NULL))
+        return OMCERR_BADJOB;                            /* it would wait on another task's signal */
     if ((r = start_job(job, base)) || job->omj_Private[P_STATE] == 2) return job->omj_Status;
     return board_finish(job);
 }
 
 static LONG OMC_Submit(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base))
 {
+    LONG r;
     if (!job || !job->omj_Entry) return OMCERR_BADJOB;
-    return start_job(job, base);                         /* the main CPU's jobs are done when this returns */
+    r = start_job(job, base);                            /* the main CPU's jobs are done when this returns */
+    if (job->omj_Private[P_STATE] != 1 && job->omj_Private[P_SIGMASK])
+        Signal((struct Task *)job->omj_Private[P_SIGTASK], job->omj_Private[P_SIGMASK]);   /* collectable now: say so as a board would */
+    return r;
 }
 
 static LONG OMC_Wait(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base))
@@ -559,4 +643,103 @@ static ULONG OMC_GrantSeg(REG(a0, struct OMCJob *job), REG(d0, BPTR seglist), RE
         added++;
     }
     return added;
+}
+
+/* ---- 0.2 ------------------------------------------------------------------------- */
+
+/* A fresh job: all zero (omj_Private too), aimed at OMC_ANY, with the
+ * default stack and timeout written in. A job on a board is left alone. */
+static void OMC_JobInit(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base))
+{
+    if (!job || job->omj_Private[P_STATE] == 1) return;
+    zero(job, sizeof *job);
+    job->omj_Target = OMC_ANY;
+    job->omj_StackSize = OMC_DEFAULTSTACK;
+    job->omj_TimeoutMS = OMC_DEFAULTTIMEOUT;
+}
+
+static int chip_ram(const UBYTE *a, ULONG n)
+{
+    return (TypeOfMem((APTR)a) & MEMF_CHIP) || (TypeOfMem((APTR)(a + n - 1)) & MEMF_CHIP);
+}
+
+/* Adds a grant, checking the rules the board would only find at submit:
+ * slots, written grants, cache lines, overlaps and Chip RAM. OMCERR_OK, or
+ * why not (the job is unchanged then). */
+static LONG OMC_AddGrant(REG(a0, struct OMCJob *job), REG(a1, APTR addr), REG(d0, ULONG length), REG(d1, ULONG mode), REG(a6, struct OMCBase *base))
+{
+    const UBYTE *a = addr;
+    ULONG n, written = 0;
+    struct OMCGrant *g;
+    if (!job || job->omj_Private[P_STATE] == 1) return OMCERR_BADJOB;
+    if (!a || !length || !(mode & (OMCG_READ | OMCG_WRITE | OMCG_EXEC)) || (mode & ~(ULONG)(OMCG_READ | OMCG_WRITE | OMCG_EXEC)))
+        return OMCERR_BADGRANT;
+    n = job->omj_NGrants < OMC_MAXGRANTS ? job->omj_NGrants : OMC_MAXGRANTS;
+    for (ULONG i = 0; i < n; i++) {
+        const struct OMCGrant *o = &job->omj_Grants[i];
+        const UBYTE *oa = o->og_Addr;
+        if (o->og_Mode & OMCG_WRITE) written++;
+        if (a < oa + o->og_Length && oa < a + length && ((mode | o->og_Mode) & OMCG_WRITE))
+            return OMCERR_BADGRANT;                      /* one writer: a written range overlaps nothing */
+    }
+    if (n >= OMC_MAXGRANTS) return OMCERR_NOSLOT;
+    if (mode & OMCG_WRITE) {
+        if (written >= OMC_MAXWRITTEN) return OMCERR_NOSLOT;
+        if (((ULONG)a | length) & (OMC_GRANTALIGN - 1)) return OMCERR_BADGRANT;   /* whole cache lines only */
+    }
+    if (chip_ram(a, length)) {
+        if ((job->omj_Flags & OMCF_BOARD) || (job->omj_Target != OMC_ANY && job->omj_Target != OMC_CPU0))
+            return OMCERR_CHIPRAM;                       /* a board can't take Chip RAM */
+        job->omj_Flags |= OMCF_NOBOARD;                  /* OMC_ANY: the job stays on the main CPU */
+    }
+    g = &job->omj_Grants[n];
+    g->og_Addr = addr;
+    g->og_Length = length;
+    g->og_Mode = mode;
+    job->omj_NGrants = n + 1;
+    return OMCERR_OK;
+}
+
+/* Memory right for a grant: Fast RAM when there is any (else other public
+ * memory, which a job can still use on the main CPU), starting on a
+ * 64-byte line and rounded up to whole lines (OMCAF_PAGE: whole 4 KB
+ * pages), so nothing else shares its cache lines. */
+static APTR OMC_AllocGrant(REG(d0, ULONG size), REG(d1, ULONG flags), REG(a6, struct OMCBase *base))
+{
+    ULONG align = (flags & OMCAF_PAGE) ? OMC_PAGESIZE : OMC_ALLOCALIGN;
+    ULONG req = MEMF_PUBLIC | ((flags & OMCAF_CLEAR) ? MEMF_CLEAR : 0);
+    ULONG body, total, p, *h;
+    UBYTE *raw;
+    if (!size || size > 0x7FF00000UL) return NULL;
+    body = (size + align - 1) & ~(align - 1);
+    total = body + align + 16;
+    if (!(raw = AllocMem(total, req | MEMF_FAST)) && !(raw = AllocMem(total, req))) return NULL;
+    p = ((ULONG)raw + 16 + align - 1) & ~(align - 1);
+    h = (ULONG *)p - 4;                                  /* the header, in the line below */
+    h[0] = (ULONG)raw; h[1] = total; h[2] = body; h[3] = GRANT_MAGIC;
+    return (APTR)p;
+}
+
+static void OMC_FreeGrant(REG(a0, APTR mem), REG(a6, struct OMCBase *base))
+{
+    ULONG *h = (ULONG *)mem - 4;
+    if (!mem || h[3] != GRANT_MAGIC) return;             /* not OMC_AllocGrant's: left alone */
+    h[3] = 0;
+    FreeMem((APTR)h[0], h[1]);
+}
+
+/* From the next OMC_Submit on, sigmask (one signal bit task has allocated)
+ * is raised on task (NULL: the caller) when the job can be collected: on a
+ * board when it finishes, on the main CPU or on a refusal before
+ * OMC_Submit returns. The job then holds no signal bit of its own. 0 turns
+ * it off. OMCERR_OK, or OMCERR_BADJOB. */
+static LONG OMC_SetSignal(REG(a0, struct OMCJob *job), REG(a1, struct Task *task), REG(d0, ULONG sigmask), REG(a6, struct OMCBase *base))
+{
+    if (!job || job->omj_Private[P_STATE] == 1) return OMCERR_BADJOB;
+    if (!task) task = FindTask(NULL);
+    if (sigmask & (sigmask - 1)) return OMCERR_BADJOB;   /* one bit */
+    if (sigmask && !(task->tc_SigAlloc & sigmask)) return OMCERR_BADJOB;
+    job->omj_Private[P_SIGMASK] = sigmask;
+    job->omj_Private[P_SIGTASK] = sigmask ? (ULONG)task : 0;
+    return OMCERR_OK;
 }
