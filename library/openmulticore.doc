@@ -1,0 +1,362 @@
+TABLE OF CONTENTS
+
+openmulticore.library/OMC_Abort
+openmulticore.library/OMC_AddGrant
+openmulticore.library/OMC_AllocGrant
+openmulticore.library/OMC_Check
+openmulticore.library/OMC_CoreCount
+openmulticore.library/OMC_CoreInfo
+openmulticore.library/OMC_FreeGrant
+openmulticore.library/OMC_GrantSeg
+openmulticore.library/OMC_JobInit
+openmulticore.library/OMC_Run68k
+openmulticore.library/OMC_SetSignal
+openmulticore.library/OMC_Submit
+openmulticore.library/OMC_Wait
+
+openmulticore.library 0.2 (8.10.2026). MIT, Copyright (c) 2026 Dalsin
+Limited. The calls marked 0.2 are not in 0.1, whose version number is the
+same (0): test OMC_HAS_JOBCALLS(OpenMulticoreBase) before calling them.
+
+A job (struct OMCJob, <libraries/openmulticore.h>) is one call of a 68k
+function: no OS calls, no Chip RAM, no chipset; only its arguments, its
+stack and its grants. It runs on a core of a cores board, or on the main
+CPU (CPU0) when there is no board, with the same result.
+openmulticore.library/OMC_Abort                   openmulticore.library/OMC_Abort
+
+   NAME
+	OMC_Abort -- ask a board to stop a job
+
+   SYNOPSIS
+	OMC_Abort(job)
+	          A0
+
+	VOID OMC_Abort(struct OMCJob *);
+
+   FUNCTION
+	Asks the board running the job to stop it. A job on the main CPU
+	has already finished, and nothing happens.
+
+   NOTES
+	The job must still be collected with OMC_Wait(). Since 0.2 its status
+	is then OMCERR_CANCEL (0.1 said OMCERR_LOST), or OMCERR_OK when the
+	job finished first.
+
+   SEE ALSO
+	OMC_Wait()
+openmulticore.library/OMC_AddGrant             openmulticore.library/OMC_AddGrant
+
+   NAME
+	OMC_AddGrant -- give a job memory, checking the rules (0.2)
+
+   SYNOPSIS
+	error = OMC_AddGrant(job, addr, length, mode)
+	D0                   A0   A1    D0      D1
+
+	LONG OMC_AddGrant(struct OMCJob *, APTR, ULONG, ULONG);
+
+   FUNCTION
+	Appends a grant to omj_Grants[] and omj_NGrants, after checking what a
+	board would otherwise refuse only when the job is submitted. On a
+	refusal the job is unchanged.
+
+   INPUTS
+	job    - the job, not running.
+	addr   - the memory.
+	length - its length in bytes.
+	mode   - OMCG_READ, OMCG_WRITE (with OMCG_READ when the job also
+	         reads it) and OMCG_EXEC.
+
+   RESULT
+	error - OMCERR_OK, or:
+	        OMCERR_BADGRANT  no address or length; no mode, or an unknown
+	                         bit; a written grant whose address or length
+	                         is not a multiple of OMC_GRANTALIGN (16: whole
+	                         68k cache lines); a range that overlaps a
+	                         written grant, or a written range that overlaps
+	                         any grant.
+	        OMCERR_NOSLOT    OMC_MAXGRANTS (16) grants already, or
+	                         OMC_MAXWRITTEN (2) written ones.
+	        OMCERR_CHIPRAM   Chip RAM, for a job that must reach a board
+	                         (OMCF_BOARD, or a named core in omj_Target).
+	        OMCERR_BADJOB    no job, or a job on a board now.
+
+   NOTES
+	Chip RAM for a job aimed at OMC_ANY is accepted and sets OMCF_NOBOARD:
+	the job runs on the main CPU, where Chip RAM is fine. Set omj_Target
+	and omj_Flags before adding grants.
+
+	OMC_AllocGrant() memory meets the cache-line rule for any length up to
+	its size rounded up with OMC_GRANTSIZE().
+
+   SEE ALSO
+	OMC_AllocGrant(), OMC_JobInit(), OMC_GrantSeg()
+openmulticore.library/OMC_AllocGrant         openmulticore.library/OMC_AllocGrant
+
+   NAME
+	OMC_AllocGrant -- allocate memory right for a grant (0.2)
+
+   SYNOPSIS
+	mem = OMC_AllocGrant(size, flags)
+	D0                   D0    D1
+
+	APTR OMC_AllocGrant(ULONG, ULONG);
+
+   FUNCTION
+	Allocates public memory, Fast RAM when there is any, starting on a
+	64-byte line (OMC_ALLOCALIGN, the largest cache line in play) and
+	rounded up to whole lines, so nothing else shares its cache lines.
+
+   INPUTS
+	size  - bytes.
+	flags - OMCAF_CLEAR: zeroed.
+	        OMCAF_PAGE: 4 KB aligned and rounded up to whole pages, for the
+	        one-writer-per-page rule of DESIGN.md section 1.
+
+   RESULT
+	mem - the memory, or NULL.
+
+   NOTES
+	With no Fast RAM at all it returns other public memory (Chip RAM on
+	an A1200 without any), so a port still runs: OMC_AddGrant() then keeps
+	an OMC_ANY job on the main CPU.
+
+   SEE ALSO
+	OMC_FreeGrant(), OMC_AddGrant()
+openmulticore.library/OMC_Check                   openmulticore.library/OMC_Check
+
+   NAME
+	OMC_Check -- has a job finished?
+
+   SYNOPSIS
+	done = OMC_Check(job)
+	D0               A0
+
+	BOOL OMC_Check(struct OMCJob *);
+
+   RESULT
+	done - TRUE when OMC_Wait() would not wait: the job finished, ran on
+	       the main CPU, was refused, or was never submitted.
+
+   SEE ALSO
+	OMC_Wait(), OMC_SetSignal()
+openmulticore.library/OMC_CoreCount           openmulticore.library/OMC_CoreCount
+
+   NAME
+	OMC_CoreCount -- how many cores the board has
+
+   SYNOPSIS
+	n = OMC_CoreCount()
+	D0
+
+	ULONG OMC_CoreCount(void);
+
+   RESULT
+	n - the board's cores; 0 with no board. The main CPU is not counted.
+
+   SEE ALSO
+	OMC_CoreInfo()
+openmulticore.library/OMC_CoreInfo             openmulticore.library/OMC_CoreInfo
+
+   NAME
+	OMC_CoreInfo -- describe one core
+
+   SYNOPSIS
+	ok = OMC_CoreInfo(core, info)
+	D0                D0    A0
+
+	BOOL OMC_CoreInfo(ULONG, struct OMCCoreInfo *);
+
+   INPUTS
+	core - 0 the main CPU, 1 to OMC_CoreCount() the board's.
+	info - filled in: board, core, instruction sets, model, engine, state,
+	       load over the last second, jobs done, and the x86 or ARM64 CPU
+	       the core is pinned to.
+
+   RESULT
+	ok - FALSE for a core that isn't there.
+openmulticore.library/OMC_FreeGrant           openmulticore.library/OMC_FreeGrant
+
+   NAME
+	OMC_FreeGrant -- free OMC_AllocGrant() memory (0.2)
+
+   SYNOPSIS
+	OMC_FreeGrant(mem)
+	              A0
+
+	VOID OMC_FreeGrant(APTR);
+
+   INPUTS
+	mem - from OMC_AllocGrant(), or NULL. Memory that did not come from
+	      OMC_AllocGrant() is left alone.
+
+   NOTES
+	Free it only after the jobs that were granted it have been collected.
+openmulticore.library/OMC_GrantSeg             openmulticore.library/OMC_GrantSeg
+
+   NAME
+	OMC_GrantSeg -- grant a loaded program's hunks
+
+   SYNOPSIS
+	added = OMC_GrantSeg(job, seglist, mode)
+	D0                   A0   D0       D1
+
+	ULONG OMC_GrantSeg(struct OMCJob *, BPTR, ULONG);
+
+   FUNCTION
+	Adds a grant for every hunk, so a strict job (OMCF_STRICT) may run
+	the program's code and read its data. mode 0 means
+	OMCG_READ | OMCG_EXEC.
+
+   RESULT
+	added - the grants added (it stops at OMC_MAXGRANTS).
+openmulticore.library/OMC_JobInit               openmulticore.library/OMC_JobInit
+
+   NAME
+	OMC_JobInit -- make a job ready to fill in (0.2)
+
+   SYNOPSIS
+	OMC_JobInit(job)
+	            A0
+
+	VOID OMC_JobInit(struct OMCJob *);
+
+   FUNCTION
+	Clears the whole job, omj_Private included, then sets omj_Target to
+	OMC_ANY, omj_StackSize to OMC_DEFAULTSTACK (16 KB) and omj_TimeoutMS to
+	OMC_DEFAULTTIMEOUT (10 s). A job on a board now is left alone.
+
+   NOTES
+	It clears an OMC_SetSignal() too: call that afterwards.
+
+   SEE ALSO
+	OMC_AddGrant(), OMC_SetSignal()
+openmulticore.library/OMC_Run68k                 openmulticore.library/OMC_Run68k
+
+   NAME
+	OMC_Run68k -- run a job and wait for it
+
+   SYNOPSIS
+	status = OMC_Run68k(job)
+	D0                  A0
+
+	LONG OMC_Run68k(struct OMCJob *);
+
+   FUNCTION
+	OMC_Submit() and OMC_Wait() in one call.
+
+   RESULT
+	status - as OMC_Wait(). OMCERR_BADJOB for a job with an
+	         OMC_SetSignal() on another task.
+openmulticore.library/OMC_SetSignal             openmulticore.library/OMC_SetSignal
+
+   NAME
+	OMC_SetSignal -- signal a task when a job can be collected (0.2)
+
+   SYNOPSIS
+	error = OMC_SetSignal(job, task, sigmask)
+	D0                    A0   A1    D0
+
+	LONG OMC_SetSignal(struct OMCJob *, struct Task *, ULONG);
+
+   FUNCTION
+	From the next OMC_Submit() on, sigmask is raised on task when the job
+	can be collected: on a board when it finishes; on the main CPU, or
+	when OMC_Submit() refuses it, before OMC_Submit() returns. A main loop
+	can then Wait() on its window, its ports and its jobs together, and
+	collect with OMC_Check() and OMC_Wait().
+
+	Many jobs may share one signal. A job with a signal holds no signal
+	bit of its own while it runs (without one, each job on a board holds
+	one of the submitting task's, until OMC_Wait()).
+
+   INPUTS
+	job     - the job, not running.
+	task    - the task to signal; NULL for the caller.
+	sigmask - one signal bit that task has allocated (AllocSignal()), or
+	          0 to stop signalling.
+
+   RESULT
+	error - OMCERR_OK, or OMCERR_BADJOB (no job, a job running, more than
+	        one bit, or a bit the task hasn't allocated).
+
+   NOTES
+	The rule stays: one OMC_Wait() for each OMC_Submit(). Call it from
+	the signalled task: from another, on a job still running, OMC_Wait()
+	returns OMCERR_BADJOB and leaves the job to be collected later.
+
+	A signal may come with nothing new to collect (the library gives a
+	signal back after waiting on it itself). After each Wait(), check
+	every job with OMC_Check().
+
+   EXAMPLE
+	sig = AllocSignal(-1);
+	for (i = 0; i < n; i++) {
+	    ... OMC_JobInit, entry, OMC_AddGrant ...
+	    OMC_SetSignal(&job[i], NULL, 1UL << sig);
+	    OMC_Submit(&job[i]);
+	}
+	while (left) {
+	    Wait((1UL << sig) | window_signals);
+	    for (i = 0; i < n; i++)
+	        if (!collected[i] && OMC_Check(&job[i])) {
+	            collected[i] = TRUE; left--;
+	            if (OMC_Wait(&job[i]) == OMCERR_OK) use(i);
+	        }
+	    ... the window's messages ...
+	}
+
+   SEE ALSO
+	OMC_Submit(), OMC_Check(), OMC_Wait()
+openmulticore.library/OMC_Submit                 openmulticore.library/OMC_Submit
+
+   NAME
+	OMC_Submit -- start a job
+
+   SYNOPSIS
+	error = OMC_Submit(job)
+	D0                 A0
+
+	LONG OMC_Submit(struct OMCJob *);
+
+   FUNCTION
+	Starts the job where omj_Target, omj_Flags and the user's
+	ENV:OpenMulticore settings send it. A job for the main CPU, or with
+	no board to go to, has already run when OMC_Submit() returns.
+
+   RESULT
+	error - OMCERR_OK, or the reason it could not start (OMCERR_NOCORE,
+	        OMCERR_BUSY with OMCF_NOWAIT, OMCERR_NOMEM, OMCERR_BADJOB).
+	        Not a job id: the job itself is the handle.
+
+   NOTES
+	Follow every OMC_Submit() with one OMC_Wait(), from the same task (or
+	the OMC_SetSignal() task).
+
+   SEE ALSO
+	OMC_Wait(), OMC_Check(), OMC_Abort(), OMC_SetSignal()
+openmulticore.library/OMC_Wait                     openmulticore.library/OMC_Wait
+
+   NAME
+	OMC_Wait -- collect a job
+
+   SYNOPSIS
+	status = OMC_Wait(job)
+	D0                A0
+
+	LONG OMC_Wait(struct OMCJob *);
+
+   FUNCTION
+	Waits for the job if it still runs, takes the board's answer into the
+	job (omj_Regs, omj_FPCR, omj_Status, the fault) and frees what the
+	library allocated for it. On a job that ran on the main CPU, or was
+	refused, it returns its status at once.
+
+   RESULT
+	status - omj_Status: OMCERR_OK, OMCERR_FAULT (omj_FaultVector,
+	         omj_FaultPC), OMCERR_TIMEOUT, OMCERR_CANCEL, OMCERR_LOST...
+	         OMCERR_BADJOB from a task other than the OMC_SetSignal() one
+	         while the job runs (it is not collected then).
+
+   SEE ALSO
+	OMC_Submit(), OMC_Check(), OMC_SetSignal()
