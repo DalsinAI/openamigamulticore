@@ -105,7 +105,7 @@ the main CPU.
 
 **Measured on Instance-32** (AC090 68040, JIT, hyper; cores board, 8
 translated cores; ms, best of 5 on a quiet host, best of 3 with the host's
-load average at 25 on its 12 threads). Every way gave the same bytes in
+load average at 25 on its 12 threads, in brackets). Every way gave the same bytes in
 every run: plain (what a machine without the library does), the library
 with no board (the bands run by the library on the main CPU), and the board.
 
@@ -124,9 +124,12 @@ One core runs the blend at about a sixth of the main CPU's speed (half the
 rows in 172 ms against all of them in 59 ms); waiting for all, 1, 2, 4 and
 8 cores take 172, 122, 76 and 73 ms, so the board stops gaining after four.
 The 24-bit scale, with no divisions by 255, is the one loop the board wins:
-1.8 times faster on a quiet host, 1.5 times slower on a busy one. An earlier
-run the same morning had the board 10 to 50 times slower than the main CPU,
-so the board's speed depends on the host's load. Inflate and the filters,
+1.8 times faster on a quiet host, 1.5 times slower on a busy one. A third
+run, with the host between the two, had the take-back ahead on both scaled
+backdrops (80.0 against 88.7 ms with alpha, 19.7 against 21.2 without) and
+behind on everything else. An earlier run the same morning had the board 10
+to 50 times slower than the main CPU, so the board's speed depends on the
+host's load. Inflate and the filters,
 which stay on one core, take 67 to 109 ms of a backdrop PNG's decode, the
 colours 8 to 9 ms. DTRead through the installed openpng.datatype 47.3 reads
 that backdrop in 9 to 14 ticks and the 1920x1080 RGBA test file in 67;
@@ -153,16 +156,17 @@ off at screen sizes.
    for crc32 and adler32) gains more, sooner, than bands.
 4. **OpenGfx: do not band its big operations onto the cores.** Its leaves
    are host-native already: at 640x480 an 8-plane fill takes 0.018 ms
-   (0.63 ms in 68k code), a 32-bit fill 0.11 ms (0.75), a one-line scroll
-   0.033 ms (1.2). Sending eight bands costs 3 to 12 ms before any work, a
-   hundred times a whole leaf, and each band would run as 68k code at about
-   a sixth of the main CPU's speed. If a large operation needs more than one
+   (0.63 ms in 68k code), a 32-bit fill 0.11 ms (0.75), a 32-bit one-line
+   scroll 0.033 ms (1.2). Sending eight bands costs 3 to 12 ms before any
+   work, 30 to 170 times a whole leaf, and each band would run as 68k code
+   at about a sixth of the main CPU's speed. If a large operation needs more than one
    host CPU, the leaf itself should use host threads inside the runtime,
    which needs no change on the Amiga side. The browser's real cost,
    pixman's `over32` (1.05 s a 640x480 frame) and `mask_a8_over32`
-   (0.55 s), gains at most about twice in eight bands at today's core
-   speed, against tens of times as host leaves: make them leaves first, and
-   band only 68k fallbacks, once a core runs near the main CPU's speed.
+   (0.55 s), would gain at most about twice in eight bands at today's core
+   speed, where the leaves built so far gained 7 to 36 times: make them
+   leaves first, and band only 68k fallbacks, once a core runs near the
+   main CPU's speed.
 
 ## Licence and credit
 
