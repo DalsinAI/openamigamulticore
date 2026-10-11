@@ -90,6 +90,60 @@ on the caller: the same bytes every way. The band function is a job (no OS
 calls, writes only its rows); written bands start on 16-byte lines, so the
 output buffer must too. `tools/omcbands.c` (OMCBands) checks and times it.
 
+**Why a header, not a library call.** `omc_bands()` is built from the calls
+openmulticore.library 0.1 and 0.2 already have (`OMC_Submit`, `OMC_Check`,
+`OMC_Abort`, `OMC_Wait`, and `OMC_JobInit`/`OMC_SetSignal` when there), so:
+
+- it works with no library at all: a program built with it opens the
+  library itself, and with none installed it calls the band function once
+  for every row. An `OMC_Bands()` in the library would need the library
+  present just to fall back, and every caller would carry that fallback
+  anyway;
+- it works with the library already installed (0.1 or 0.2) on every
+  instance, with no new library version to deploy first and no new LVO;
+- its policy (how many bands, the caller's own band, taking back, resting
+  the board) can change per program with a rebuild, while what the board
+  needs (grants on 16-byte lines, one written grant per job) stays the
+  library's to check;
+- the price is one static function in each program that uses it.
+
+If the policy settles and more programs use it, it can move into the
+library as `OMC_Bands()` with this header as its fallback, and nothing that
+calls it changes.
+
+## BandBench: each kind with 0, 1, 2, 4 and 8 cores
+
+`tools/bandbench.c` (BandBench) times every loop that uses `omc_bands()`
+today, each a copy of its program's band function: OpenBench's `cover()`
+(1600x1200 24-bit to 1920x1080), `over_gradient()` (1920x1080 with alpha,
+in place) and the two in one pass as 0.1.16 does them; openpng.datatype's
+colours for RGB and RGBA rows and for Adam7's placing (1920x1080); and a
+64x64 call to show the cost of one. Each runs with 0 cores (the plain
+loop, what a machine without the library does), through the library aimed
+at the main CPU (what it does with no board), and with at most 1, 2, 4 and
+8 cores beside the caller, first taking back unfinished bands (what the
+programs do) and then waiting for every band (the cores' own speed). Every
+way must give the plain loop's bytes, or the kind says DIFFERENT and the
+run fails.
+
+    library/build.sh build              (builds BandBench beside OMCTest)
+    BandBench                           (every kind, best of 5)
+    BandBench REPS 9 KIND 3 QUICK       (one kind, no waiting line)
+
+Run it three ways on the same instance: with openmulticore.library removed
+(LIBS:), with the library and the board switched off in Cradle, and with
+the board on. Numbers: to be added from Instance-32 (Salvor).
+
+| Kind | 0 | cpu0 | 1 | 2 | 4 | 8 |
+| --- | --- | --- | --- | --- | --- | --- |
+| cover | | | | | | |
+| over | | | | | | |
+| cover+over | | | | | | |
+| png rgb | | | | | | |
+| png rgba | | | | | | |
+| adam7 | | | | | | |
+| small (64x64) | | | | | | |
+
 ## What uses the cores (11 October 2026)
 
 | Program | On the cores |
@@ -98,12 +152,13 @@ output buffer must too. `tools/omcbands.c` (OMCBands) checks and times it.
 | OpenBench 0.1.16 (openamigabench `tern/backdrop-bands`) | the backdrop's scale and blend (`backdrop_rows`) through `omc_bands`, only when `ENV:OpenMulticore/Bands` exists |
 | openpng.datatype 47.4 (openamigaimage `tern/png-bands`) | the colour stage (`png_rows`: rows to ARGB, Adam7's placing) through `omc_bands`, only for pictures of 8 megapixels or more; inflate and the filters stay row-serial |
 | OpenMonitor, OpenTitle | open the library to show the cores |
-| OMCTest, OMCBands, PNGBench | test and time it |
+| OMCTest, OMCBands, BandBench, PNGBench | test and time it |
 
 OpenGfx (in opengpu.library) does not: its leaves are host-native code on
 the main CPU.
 
-**Measured on Instance-32** (AC090 68040, JIT, hyper; cores board, 8
+**Measured on Instance-32** with OMCBands and PNGBench by the first
+Tern run of 11 October 2026 (AC090 68040, JIT, hyper; cores board, 8
 translated cores; ms, best of 5 on a quiet host, best of 3 with the host's
 load average at 25 on its 12 threads, in brackets). Every way gave the same bytes in
 every run: plain (what a machine without the library does), the library
