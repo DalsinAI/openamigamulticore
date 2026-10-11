@@ -69,6 +69,101 @@ returned as a status, and a strict job all pass. Jobs aimed at a named core
 wait for the board to accept the core number (request bits 24 to 28), which
 the AC090 work is adding.
 
+## omc_bands(): a loop shared between the cores
+
+`include/openmulticore/bands.h` (11 October 2026), header-only, for a loop
+over the rows of a picture:
+
+    static void band(APTR data, ULONG y0, ULONG y1) { ...rows y0 to y1 - 1... }
+    omc_bands(NULL, band, &args, rows, out, stride, 0, NULL);
+
+The rows are cut into bands, one for each core and one for the caller,
+which runs its own while the cores run theirs. Then it goes through the
+bands from the last: a finished band is collected, an unfinished one is
+taken back (`OMC_Abort`, `OMC_Wait`) and run by the caller. A cancelled job
+never reaches guest RAM (CORES_BOARD.md), so the rows are whole either way,
+and a slow or busy board costs the caller about 3 ms (eight bands sent and
+taken back) rather than the board's time. After a call that took back every
+band, the next `OMC_BANDS_REST` (8) calls skip the board. With no library,
+no board, a picture too small to share, or any error on a core, the rows run
+on the caller: the same bytes every way. The band function is a job (no OS
+calls, writes only its rows); written bands start on 16-byte lines, so the
+output buffer must too. `tools/omcbands.c` (OMCBands) checks and times it.
+
+## What uses the cores (11 October 2026)
+
+| Program | On the cores |
+| --- | --- |
+| openmodule.datatype 47.3 | a module's mixing, as a job |
+| OpenBench 0.1.16 (openamigabench `tern/backdrop-bands`) | the backdrop's scale and blend (`backdrop_rows`) through `omc_bands`, only when `ENV:OpenMulticore/Bands` exists |
+| openpng.datatype 47.4 (openamigaimage `tern/png-bands`) | the colour stage (`png_rows`: rows to ARGB, Adam7's placing) through `omc_bands`, only for pictures of 8 megapixels or more; inflate and the filters stay row-serial |
+| OpenMonitor, OpenTitle | open the library to show the cores |
+| OMCTest, OMCBands, PNGBench | test and time it |
+
+OpenGfx (in opengpu.library) does not: its leaves are host-native code on
+the main CPU.
+
+**Measured on Instance-32** (AC090 68040, JIT, hyper; cores board, 8
+translated cores; ms, best of 5 on a quiet host, best of 3 with the host's
+load average at 25 on its 12 threads). Every way gave the same bytes in
+every run: plain (what a machine without the library does), the library
+with no board (the bands run by the library on the main CPU), and the board.
+
+| Work | Plain | Library, no board | 8 cores, waiting for all | 8 cores, `omc_bands` (taking back) |
+| --- | --- | --- | --- | --- |
+| Backdrop 1600x1200 with alpha, scaled to 1920x1080 and blended | 59.0 (220.8 loaded) | 57.2 | 72.6 | 63.1 (257.5 loaded) |
+| The same, 24-bit | 19.4 (25.4) | 19.1 | 13.2 | **11.0** (38.2) |
+| 1920x1080 with alpha, blended in place | 46.7 (82.4) | 45.1 | 65.3 | 54.2 (97.3) |
+| 1920x1080 24-bit in place (32's boot) | 7.6 (8.8) | 7.8 | 18.6 | 12.2 (22.8) |
+| 64x64 (the cost of a call) | 0.0 | 0.1 | 12.3 | 3.1 |
+| PNG colours, 1920x1080 RGB (an OpenUp backdrop) | 8.0 (9.0) | 7.4 | 10.9 | 11.3 (20.3) |
+| PNG colours, 1920x1080 RGBA (loaded) | 10.3 | 9.7 | 32.9 | 22.3 |
+| PNG colours, 1280x1024 RGBA Adam7 (loaded) | 10.6 | 10.3 | 27.0 | 35.9 |
+
+One core runs the blend at about a sixth of the main CPU's speed (half the
+rows in 172 ms against all of them in 59 ms); waiting for all, 1, 2, 4 and
+8 cores take 172, 122, 76 and 73 ms, so the board stops gaining after four.
+The 24-bit scale, with no divisions by 255, is the one loop the board wins:
+1.8 times faster on a quiet host, 1.5 times slower on a busy one. An earlier
+run the same morning had the board 10 to 50 times slower than the main CPU,
+so the board's speed depends on the host's load. Inflate and the filters,
+which stay on one core, take 67 to 109 ms of a backdrop PNG's decode, the
+colours 8 to 9 ms. DTRead through the installed openpng.datatype 47.3 reads
+that backdrop in 9 to 14 ticks and the 1920x1080 RGBA test file in 67;
+47.4 does the same work at these sizes.
+
+So today the cores gain only on light loops, only on a quiet host, and not
+on anything the desktop does at boot. Where they lose, `omc_bands`' take-back
+holds the loss to 3 to 8 ms on a quiet host (13 to 37 ms on a busy one);
+waiting for every band lost up to 1.9 s in the earlier run.
+OpenBench keeps the bands off unless `ENV:OpenMulticore/Bands` exists (to
+try the board again without a new build), and openpng.datatype keeps them
+off at screen sizes.
+
+## What next
+
+1. **The board's per-core speed** (AC090 work, amigachrome `cores.c`): a
+   translated core runs the blend about six times slower than the main CPU,
+   and gains stop after four cores. OMCBands is the measure: when "cores"
+   beats "plain" on the blend, turn the bands on.
+2. **The cost of a job**: about 1.5 ms each to send and wait, 0.4 ms to send
+   and take back. A batch call (several jobs in one request) would help.
+3. **PNG**: the part worth sharing is inflate and the filters (about 90% of
+   a decode), which are row-serial. A host-native inflate (AC090 magic, as
+   for crc32 and adler32) gains more, sooner, than bands.
+4. **OpenGfx: do not band its big operations onto the cores.** Its leaves
+   are host-native already: at 640x480 an 8-plane fill takes 0.018 ms
+   (0.63 ms in 68k code), a 32-bit fill 0.11 ms (0.75), a one-line scroll
+   0.033 ms (1.2). Sending eight bands costs 3 to 12 ms before any work, a
+   hundred times a whole leaf, and each band would run as 68k code at about
+   a sixth of the main CPU's speed. If a large operation needs more than one
+   host CPU, the leaf itself should use host threads inside the runtime,
+   which needs no change on the Amiga side. The browser's real cost,
+   pixman's `over32` (1.05 s a 640x480 frame) and `mask_a8_over32`
+   (0.55 s), gains at most about twice in eight bands at today's core
+   speed, against tens of times as host leaves: make them leaves first, and
+   band only 68k fallbacks, once a core runs near the main CPU's speed.
+
 ## Licence and credit
 
 OpenMulticore is free software under the MIT licence (`LICENSE`,

@@ -21,8 +21,9 @@
  * the setup. When a call has had to take back every band, the next
  * OMC_BANDS_REST calls in the program skip the board (OMCBF_WAIT: wait for
  * every band instead, for tests). Measured on Instance-32 on 11 October
- * 2026, the cores board's translated cores ran these loops 10 to 50 times
- * slower than the main CPU (README.md, "What uses the cores").
+ * 2026, a core of the cores board ran these loops 6 to 50 times slower than
+ * the main CPU, depending on the host's load, and eight bands cost about
+ * 3 ms to send and take back (README.md, "What uses the cores").
  *
  * The band function is a job (DESIGN.md section 4, CORES_BOARD.md section 1):
  *  - no OS calls, no malloc, printf or float library calls; integer code
