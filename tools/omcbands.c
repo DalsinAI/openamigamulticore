@@ -18,7 +18,8 @@
  * a screen-sized picture with alpha laid over it in place; a screen-sized
  * 24-bit one (Instance-32's boot: the backdrop's screen-sized twin); and a
  * 64 x 64 one, to show what a call costs when there is almost nothing to share.
- *   OMCBands [REPS n] [W n] [H n]
+ *   OMCBands [REPS n] [W n] [H n] [CORES n] [WORK n]
+ * CORES: at most n bands to the cores; WORK: only workload n (1 to 5).
  * Built by library/build.sh. 11 October 2026, the Team. */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -116,6 +117,8 @@ static const ULONG way_flags[3] = { OMCBF_LOCAL, OMCBF_LIBCPU0, 0 };
 
 /* One workload: each way REPS times, the picture made afresh before every run (the work is in place
  * when the picture is screen sized). 0 when every way gave the same bytes. */
+static ULONG max_cores;     /* CORES n: at most n bands to the cores */
+
 static int workload(struct Library *omc, const char *name, LONG sw, LONG sh, LONG W, LONG H, int alpha, ULONG reps)
 {
     APTR sb = NULL, gb = NULL, db = NULL, pb = NULL;
@@ -151,7 +154,7 @@ static int workload(struct Library *omc, const char *name, LONG sw, LONG sh, LON
             if (pic) { CopyMemQuick(src, pic, (ULONG)W * H * 4); b.src = b.dst = pic; }   /* in place, as OpenBench */
             else { b.dst = dst; }
             t0 = now_us();
-            omc_bands(omc, backdrop_rows, &b, (ULONG)H, b.dst, (ULONG)W * 4, way_flags[w], &st);
+            omc_bands(omc, backdrop_rows, &b, (ULONG)H, b.dst, (ULONG)W * 4, way_flags[w] | OMCBF_MAXCORES(max_cores), &st);
             t1 = now_us();
             if (t1 - t0 < best) best = t1 - t0;
             total += t1 - t0;
@@ -173,15 +176,17 @@ out:
 
 int main(void)
 {
-    LONG argv[3] = { 0, 0, 0 };
-    struct RDArgs *ra = ReadArgs((STRPTR)"REPS/K/N,W/K/N,H/K/N", argv, NULL);
-    ULONG reps = 5, W = 1920, H = 1080;
+    LONG argv[5] = { 0, 0, 0, 0, 0 };
+    struct RDArgs *ra = ReadArgs((STRPTR)"REPS/K/N,W/K/N,H/K/N,CORES/K/N,WORK/K/N", argv, NULL);
+    ULONG reps = 5, W = 1920, H = 1080, only = 0;
     struct Library *omc;
     int bad = 0;
     if (ra) {
         if (argv[0]) reps = *(LONG *)argv[0];
         if (argv[1]) W = *(LONG *)argv[1];
         if (argv[2]) H = *(LONG *)argv[2];
+        if (argv[3]) max_cores = *(LONG *)argv[3];
+        if (argv[4]) only = *(LONG *)argv[4];
         FreeArgs(ra);
     }
     if (!reps) reps = 1;
@@ -195,16 +200,23 @@ int main(void)
         efreq = ReadEClock(&e);
     }
     omc = OpenLibrary((STRPTR)OPENMULTICORE_NAME, 0);
-    if (omc)
-        Printf((STRPTR)"OMCBands: openmulticore.library %ld.%ld, %ld cores\n", (LONG)omc->lib_Version, (LONG)omc->lib_Revision,
-               (LONG)({ struct Library *OpenMulticoreBase = omc; OMC_CoreCount(); }));
+    if (omc) {
+        struct Library *OpenMulticoreBase = omc;
+        struct OMCCoreInfo ci;
+        ULONG n = OMC_CoreCount();
+        Printf((STRPTR)"OMCBands: openmulticore.library %ld.%ld, %ld cores%s\n", (LONG)omc->lib_Version, (LONG)omc->lib_Revision,
+               (LONG)n, (LONG)(max_cores ? ", bands to the cores limited" : ""));
+        if (n && OMC_CoreInfo(1, &ci))
+            Printf((STRPTR)"  core 1: model %lx, engine %ld (1 interpreter, 2 translated), host CPU %ld, jobs done %ld\n",
+                   ci.oci_Model, ci.oci_Engine, (LONG)ci.oci_HostCPU, ci.oci_JobsDone);
+    }
     else
         PutStr((STRPTR)"OMCBands: no openmulticore.library (plain calls only)\n");
-    bad |= workload(omc, "scale+blend", 1600, 1200, (LONG)W, (LONG)H, 1, reps);
-    bad |= workload(omc, "scale 24-bit", 1600, 1200, (LONG)W, (LONG)H, 0, reps);
-    bad |= workload(omc, "blend in place", (LONG)W, (LONG)H, (LONG)W, (LONG)H, 1, reps);
-    bad |= workload(omc, "24-bit in place", (LONG)W, (LONG)H, (LONG)W, (LONG)H, 0, reps);
-    bad |= workload(omc, "small", 64, 64, 64, 64, 1, reps);
+    if (!only || only == 1) bad |= workload(omc, "scale+blend", 1600, 1200, (LONG)W, (LONG)H, 1, reps);
+    if (!only || only == 2) bad |= workload(omc, "scale 24-bit", 1600, 1200, (LONG)W, (LONG)H, 0, reps);
+    if (!only || only == 3) bad |= workload(omc, "blend in place", (LONG)W, (LONG)H, (LONG)W, (LONG)H, 1, reps);
+    if (!only || only == 4) bad |= workload(omc, "24-bit in place", (LONG)W, (LONG)H, (LONG)W, (LONG)H, 0, reps);
+    if (!only || only == 5) bad |= workload(omc, "small", 64, 64, 64, 64, 1, reps);
     if (omc) CloseLibrary(omc);
     CloseDevice((struct IORequest *)&treq);
     PutStr((STRPTR)(bad ? "OMCBands: FAIL\n" : "OMCBands: all ways the same\n"));

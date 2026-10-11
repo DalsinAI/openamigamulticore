@@ -61,6 +61,7 @@ typedef void (*omc_band_fn)(APTR data, ULONG y0, ULONG y1);
 #define OMCBF_LOCAL   (1UL << 0)        /* every row on the caller: what a machine without the library does */
 #define OMCBF_LIBCPU0 (1UL << 1)        /* the bands go through the library aimed at the main CPU: the library's fallback, for tests */
 #define OMCBF_NOSELF  (1UL << 2)        /* the caller takes no band of its own, only the rows the board can't */
+#define OMCBF_MAXCORES(n) (((ULONG)(n) & 15) << 24)   /* at most n bands to the cores (0: one for each core) */
 
 struct OMCBandStats {
     ULONG obs_Bands;                    /* jobs sent */
@@ -99,6 +100,7 @@ static __attribute__((unused)) LONG omc_bands(struct Library *base, omc_band_fn 
     if ((flags & OMCBF_LIBCPU0) && !cores) cores = 2;
     if (!cores) goto local;
     if (cores > OMC_BANDS_MAX) cores = OMC_BANDS_MAX;
+    if (((flags >> 24) & 15) && cores > ((flags >> 24) & 15)) cores = (flags >> 24) & 15;
     /* q rows make a whole number of 16-byte lines; row ya is the first on a line's start */
     for (q = 1; (q * stride) & 15; q++) ;
     for (ya = 0; ya < q && (((ULONG)o + ya * stride) & 15); ya++) ;
