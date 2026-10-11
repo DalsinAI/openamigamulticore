@@ -14,6 +14,16 @@
  * a timeout, Chip RAM, no memory) is run again on the caller, so the answer
  * is always whole.
  *
+ * The caller never waits long on a slow or busy board: when its own rows are
+ * done it goes through the bands from the last, collecting each one a core
+ * has finished and taking back (OMC_Abort) and running itself each one not
+ * yet finished, so a board slower than the caller costs little more than
+ * the setup. When a call has had to take back every band, the next
+ * OMC_BANDS_REST calls in the program skip the board (OMCBF_WAIT: wait for
+ * every band instead, for tests). Measured on Instance-32 on 11 October
+ * 2026, the cores board's translated cores ran these loops 10 to 50 times
+ * slower than the main CPU (README.md, "What uses the cores").
+ *
  * The band function is a job (DESIGN.md section 4, CORES_BOARD.md section 1):
  *  - no OS calls, no malloc, printf or float library calls; integer code
  *    and its own helpers only (they run where it runs);
@@ -61,14 +71,20 @@ typedef void (*omc_band_fn)(APTR data, ULONG y0, ULONG y1);
 #define OMCBF_LOCAL   (1UL << 0)        /* every row on the caller: what a machine without the library does */
 #define OMCBF_LIBCPU0 (1UL << 1)        /* the bands go through the library aimed at the main CPU: the library's fallback, for tests */
 #define OMCBF_NOSELF  (1UL << 2)        /* the caller takes no band of its own, only the rows the board can't */
+#define OMCBF_WAIT    (1UL << 3)        /* wait for every band the cores took, never take one back */
 #define OMCBF_MAXCORES(n) (((ULONG)(n) & 15) << 24)   /* at most n bands to the cores (0: one for each core) */
+
+#define OMC_BANDS_REST 8                /* calls that skip the board after one that took every band back */
 
 struct OMCBandStats {
     ULONG obs_Bands;                    /* jobs sent */
     ULONG obs_Board;                    /* of them, run on a board's core */
     ULONG obs_Redone;                   /* run again on the caller after an error */
     ULONG obs_SelfRows;                 /* rows the caller ran itself */
+    ULONG obs_Taken;                    /* not finished when the caller came to them: taken back */
 };
+
+static __attribute__((unused)) ULONG omc__rest;   /* calls left that skip the board (this program's) */
 
 static __attribute__((unused)) ULONG omc__align_up(ULONG y, ULONG ya, ULONG q, ULONG last)
 {
@@ -89,9 +105,10 @@ static __attribute__((unused)) LONG omc_bands(struct Library *base, omc_band_fn 
     struct OMCBandStats dummy;
     UBYTE *o = (UBYTE *)out;
     if (!st) st = &dummy;
-    st->obs_Bands = st->obs_Board = st->obs_Redone = st->obs_SelfRows = 0;
+    st->obs_Bands = st->obs_Board = st->obs_Redone = st->obs_SelfRows = st->obs_Taken = 0;
     if (!rows) return 0;
     if (flags & OMCBF_LOCAL) goto local;
+    if (omc__rest && !(flags & (OMCBF_WAIT | OMCBF_LIBCPU0))) { omc__rest--; goto local; }
     if (!OpenMulticoreBase) {
         if (!(OpenMulticoreBase = OpenLibrary((CONST_STRPTR)OPENMULTICORE_NAME, 0))) goto local;
         opened = 1;
@@ -151,17 +168,31 @@ static __attribute__((unused)) LONG omc_bands(struct Library *base, omc_band_fn 
     /* the caller's own rows, while the cores run theirs */
     if (lo[0] > 0) { fn(data, 0, lo[0]); st->obs_SelfRows += lo[0]; }
     if (hi[n - 1] < rows) { fn(data, hi[n - 1], rows); st->obs_SelfRows += rows - hi[n - 1]; }
-    for (k = 0; k < n; k++) {
-        struct OMCJob *j = &jobs[k];
-        LONG r = sub[k] != OMCERR_OK ? sub[k] : OMC_Wait(j);
-        if (r != OMCERR_OK) {
-            fn(data, lo[k], hi[k]);               /* run again here: the rows are whole either way */
-            st->obs_Redone++;
-            st->obs_SelfRows += hi[k] - lo[k];
-        } else {
-            if (j->omj_Where == OMCW_BOARD) st->obs_Board++;
-            CacheClearE(o + lo[k] * stride, (hi[k] - lo[k]) * stride, CACRF_ClearD);
+    /* then the bands, the last first: one finished is collected, one not finished is taken back and
+     * run here (the job is over when OMC_Wait returns, so nothing of it lands after these rows) */
+    {
+        ULONG sent = 0;
+        for (k = n; k-- > 0; ) {
+            struct OMCJob *j = &jobs[k];
+            LONG r = sub[k];
+            if (r == OMCERR_OK) {
+                if (j->omj_Where != OMCW_CPU0) sent++;
+                if (!(flags & OMCBF_WAIT) && !OMC_Check(j)) {
+                    OMC_Abort(j);
+                    st->obs_Taken++;
+                }
+                r = OMC_Wait(j);
+            }
+            if (r != OMCERR_OK) {
+                fn(data, lo[k], hi[k]);           /* run again here: the rows are whole either way */
+                st->obs_Redone++;
+                st->obs_SelfRows += hi[k] - lo[k];
+            } else {
+                if (j->omj_Where == OMCW_BOARD) st->obs_Board++;
+                CacheClearE(o + lo[k] * stride, (hi[k] - lo[k]) * stride, CACRF_ClearD);
+            }
         }
+        if (sent && st->obs_Taken >= sent) omc__rest = OMC_BANDS_REST;   /* the board gave nothing in time */
     }
     if (sig >= 0) { SetSignal(0, 1UL << sig); FreeSignal(sig); }   /* nothing left pending on a bit given back */
     FreeVec(args);

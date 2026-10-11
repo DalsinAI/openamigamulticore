@@ -7,7 +7,10 @@
  *           without openmulticore.library does: OMCBF_LOCAL);
  *   cpu0    the bands through the library aimed at the main CPU (what the
  *           library does with no cores board: OMCBF_LIBCPU0);
- *   cores   the bands on the cores board, the caller taking a band too.
+ *   cores wait   the bands on the cores board, the caller taking a band
+ *           too and then waiting for every band (OMCBF_WAIT);
+ *   cores   the same, taking back each band not finished when the caller
+ *           comes to it (omc_bands' default).
  * Every way must give the same bytes; the times are the best of REPS runs,
  * in milliseconds from the E clock.
  *
@@ -112,8 +115,8 @@ static ULONG *alloc_line(ULONG bytes, APTR *block)
     return m ? (ULONG *)(((ULONG)m + 15) & ~15UL) : NULL;
 }
 
-static const char *const way_name[3] = { "plain", "cpu0 ", "cores" };
-static const ULONG way_flags[3] = { OMCBF_LOCAL, OMCBF_LIBCPU0, 0 };
+static const char *const way_name[4] = { "plain     ", "cpu0      ", "cores wait", "cores     " };
+static const ULONG way_flags[4] = { OMCBF_LOCAL, OMCBF_LIBCPU0, OMCBF_WAIT, 0 };
 
 /* One workload: each way REPS times, the picture made afresh before every run (the work is in place
  * when the picture is screen sized). 0 when every way gave the same bytes. */
@@ -145,12 +148,13 @@ static int workload(struct Library *omc, const char *name, LONG sw, LONG sh, LON
     b.ox = (sw - b.vw) / 2;
     b.oy = (sh - b.vh) / 2;
     Printf((STRPTR)"%s: %ldx%ld%s -> %ldx%ld\n", (LONG)name, sw, sh, (LONG)(alpha ? " with alpha" : ""), W, H);
-    for (w = 0; w < 3; w++) {
+    for (w = 0; w < 4; w++) {
         ULONG best = ~0UL, total = 0, got = 0;
         struct OMCBandStats st;
         if (w > 0 && !omc) { Printf((STRPTR)"  %s  (no openmulticore.library)\n", (LONG)way_name[w]); continue; }
         for (r = 0; r < reps; r++) {
             ULONG t0, t1;
+            omc__rest = 0;                 /* every run tries the board: what one call costs */
             if (pic) { CopyMemQuick(src, pic, (ULONG)W * H * 4); b.src = b.dst = pic; }   /* in place, as OpenBench */
             else { b.dst = dst; }
             t0 = now_us();
@@ -162,9 +166,9 @@ static int workload(struct Library *omc, const char *name, LONG sw, LONG sh, LON
             if (w == 0 && r == 0) want = got;
             else if (got != want) bad = 1;
         }
-        Printf((STRPTR)"  %s  best %5ld.%ld ms  mean %5ld.%ld ms  bands %ld, on the board %ld, redone %ld, caller's rows %ld  sum %08lx %s\n",
+        Printf((STRPTR)"  %s  best %5ld.%ld ms  mean %5ld.%ld ms  bands %ld, on the board %ld, taken back %ld, caller's rows %ld  sum %08lx %s\n",
                (LONG)way_name[w], best / 1000, (best % 1000) / 100, total / reps / 1000, (total / reps % 1000) / 100,
-               st.obs_Bands, st.obs_Board, st.obs_Redone, st.obs_SelfRows, got, (LONG)(got == want ? "ok" : "DIFFERENT"));
+               st.obs_Bands, st.obs_Board, st.obs_Taken, st.obs_SelfRows, got, (LONG)(got == want ? "ok" : "DIFFERENT"));
     }
 out:
     if (sb) FreeVec(sb);
