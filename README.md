@@ -87,6 +87,20 @@ size, throughput as jobs and as ranges on 1 to all cores, and the main
 CPU's speed while every core works (`DESIGN.md` section 4 has the numbers).
 `library/build.sh` builds all three.
 
+## openmulticore.library 0.4
+
+0.4 (12 October 2026) follows the Team's decision on what a job may read.
+Permissive stays the default: a job may read any Fast RAM and ROM.
+`OMCF_STRICT` keeps a job to its grants and stack, byte exact, for secure
+applications. `OMCF_PAGES`, with `OMCF_STRICT`, adds page grants: each
+execute grant (a program's hunks, from `OMC_GrantSeg`) may be read and
+run by its whole 4 KB pages, so strict code runs at full speed. On a
+board that takes them (AmigaChrome's cores board from 12 October: INFO's
+bit 17) the library sends version 2 run blocks; on any other board it
+sends version 1, as 0.3 did, and an `OMCF_PAGES` job is plain strict.
+0.3 programs and older boards keep working unchanged. `DESIGN.md` section 4
+has the numbers, and AmigaChrome's `CORES_BOARD.md` section 0e the board's side.
+
 ## Licence and credit
 
 OpenMulticore is free software under the MIT licence (`LICENSE`,

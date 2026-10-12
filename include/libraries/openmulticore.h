@@ -1,8 +1,8 @@
-/* openmulticore.library 0.3: run 68k functions on extra cores, or on the
+/* openmulticore.library 0.4: run 68k functions on extra cores, or on the
  * main CPU when there are none (DESIGN.md sections 0 and 4). 0.2 adds
  * OMC_JobInit, OMC_AddGrant, OMC_AllocGrant, OMC_FreeGrant and
- * OMC_SetSignal; 0.3 adds OMC_SubmitRange and OMC_RunRange
- * (library/openmulticore.doc).
+ * OMC_SetSignal; 0.3 adds OMC_SubmitRange and OMC_RunRange; 0.4 adds
+ * OMCF_PAGES (library/openmulticore.doc).
  * MIT, Copyright (c) 2026 Dalsin Limited. */
 #ifndef LIBRARIES_OPENMULTICORE_H
 #define LIBRARIES_OPENMULTICORE_H
@@ -15,6 +15,7 @@
 #define OPENMULTICORE_VERSION 0
 #define OPENMULTICORE_REVISION_JOBCALLS 2   /* 0.2: the five calls below */
 #define OPENMULTICORE_REVISION_RANGE    3   /* 0.3: OMC_SubmitRange, OMC_RunRange */
+#define OPENMULTICORE_REVISION_PAGES    4   /* 0.4: OMCF_PAGES (earlier ones run such a job plain strict) */
 
 /* The library opened is 0.2 or later: OMC_JobInit, OMC_AddGrant,
  * OMC_AllocGrant, OMC_FreeGrant and OMC_SetSignal are there. The version
@@ -60,10 +61,11 @@ struct OMCGrant {
 #define OMC_CORE_NUMBER(t) ((t) & 0xFF)
 
 /* omj_Flags */
-#define OMCF_STRICT   (1UL << 0)   /* the job reads and runs only its grants and stack (needed over the LAN) */
+#define OMCF_STRICT   (1UL << 0)   /* the job reads and runs only its grants and stack (needed over the LAN); without it, any Fast RAM and ROM */
 #define OMCF_NOWAIT   (1UL << 1)   /* no free core (or the named one is busy): fail with OMCERR_BUSY instead of waiting */
 #define OMCF_NOBOARD  (1UL << 2)   /* never use a board: the main CPU only */
 #define OMCF_BOARD    (1UL << 3)   /* never the main CPU: fail with OMCERR_NOCORE when no core is there */
+#define OMCF_PAGES    (1UL << 4)   /* 0.4, with OMCF_STRICT: page grants, each execute grant readable by its whole 4 KB pages (writes stay exact) */
 
 /* omj_Status */
 #define OMCERR_OK        0

@@ -13,7 +13,9 @@
  * Times by the E-clock (timer.device). STRICT: every job strict (it reads
  * only its grants, this program's hunks among them), as over the LAN;
  * otherwise permissive (any Fast RAM and ROM), the library's default.
- *   OMCBench [JOBS n] [ITEMS n] [WORK n] [STRICT]
+ * PAGES (with STRICT): strict with page grants (0.4), the hunks read and run
+ * by their whole 4 KB pages.
+ *   OMCBench [JOBS n] [ITEMS n] [WORK n] [STRICT [PAGES]]
  * MIT, Copyright (c) 2026 Dalsin Limited. */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -47,7 +49,7 @@ __attribute__((noinline)) LONG work_index(ULONG index, ULONG n, ULONG *out)
     return (LONG)k;
 }
 
-static ULONG units, strict;
+static ULONG units, strict, pages;
 static BPTR program;                        /* STRICT: this program's hunks, granted to every job */
 
 static void reopen(void)                    /* drops the library's connection (when this is its only user), so it reads RangeCores again */
@@ -68,7 +70,7 @@ static void job_for(struct OMCJob *j, APTR fn, ULONG target, ULONG flags)
     OMC_JobInit(j);
     j->omj_Entry = fn; j->omj_Target = target; j->omj_Flags = flags;
     j->omj_StackSize = 4096;
-    if (strict) { j->omj_Flags |= OMCF_STRICT; OMC_GrantSeg(j, program, 0); }   /* reads: its code and its grants only */
+    if (strict) { j->omj_Flags |= OMCF_STRICT | (pages ? OMCF_PAGES : 0); OMC_GrantSeg(j, program, 0); }   /* reads: its code and its grants only */
 }
 
 /* 1. empty jobs: microseconds each, as tenths */
@@ -268,13 +270,14 @@ static void responsiveness(ULONG *out)
 
 int main(void)
 {
-    LONG a[4] = { 0, 0, 0, 0 };
-    struct RDArgs *rd = ReadArgs((STRPTR)"JOBS/K/N,ITEMS/K/N,WORK/K/N,STRICT/S", a, NULL);
+    LONG a[5] = { 0, 0, 0, 0, 0 };
+    struct RDArgs *rd = ReadArgs((STRPTR)"JOBS/K/N,ITEMS/K/N,WORK/K/N,STRICT/S,PAGES/S", a, NULL);
     ULONG jobs = a[0] ? *(ULONG *)a[0] : 2000, items = a[1] ? *(ULONG *)a[1] : 64, work = a[2] ? *(ULONG *)a[2] : 2000000;
     ULONG *out;
     if (rd) FreeArgs(rd);
     if (items > 256) items = 256;
     strict = a[3] != 0;
+    pages = strict && a[4] != 0;
     {
         struct CommandLineInterface *cli = BADDR(((struct Process *)FindTask(NULL))->pr_CLI);
         program = cli ? cli->cli_Module : 0;
@@ -291,7 +294,7 @@ int main(void)
     if (!(out = OMC_AllocGrant(256 * 16, OMCAF_CLEAR | OMCAF_PAGE))) return 20;   /* pages of its own, apart from the code */
     units = OMC_CoreCount();
     Printf((STRPTR)"OMCBench: openmulticore.library %ld.%ld, %ld cores on the board, %s jobs\n\n", (LONG)OpenMulticoreBase->lib_Version,
-           (LONG)OpenMulticoreBase->lib_Revision, units, (LONG)(strict ? "strict" : "permissive"));
+           (LONG)OpenMulticoreBase->lib_Revision, units, (LONG)(pages ? "strict, page grants" : strict ? "strict" : "permissive"));
     empty_costs(jobs);
     break_even(out);
     throughput(items, work, out);

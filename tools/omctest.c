@@ -559,6 +559,13 @@ int main(void)
             OMC_Run68k(&job);
             Printf((STRPTR)"strict, %ld grants: status %ld, sum %s\n", job.omj_NGrants, job.omj_Status, (LONG)(out[0] == want ? "right" : "wrong"));
             if (job.omj_Status || out[0] != want) bad++;
+            /* 0.4: strict with page grants (plain strict where the board or library has none) */
+            setup(&job, size, OMC_ANY);
+            job.omj_Flags = OMCF_STRICT | OMCF_PAGES | OMCF_BOARD;
+            if (cli) OMC_GrantSeg(&job, cli->cli_Module, 0);
+            OMC_Run68k(&job);
+            Printf((STRPTR)"strict with page grants, %ld grants: status %ld, sum %s\n", job.omj_NGrants, job.omj_Status, (LONG)(out[0] == want ? "right" : "wrong"));
+            if (job.omj_Status || out[0] != want) bad++;
         }
     }
     if (OMC_HAS_JOBCALLS(OpenMulticoreBase)) bad += test_v02(units, size, want, want_d0);
