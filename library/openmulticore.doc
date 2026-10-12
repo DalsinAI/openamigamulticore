@@ -427,6 +427,10 @@ openmulticore.library/OMC_SubmitRange         openmulticore.library/OMC_SubmitRa
 	returned are written, and every index below the lowest failing one
 	returned.
 
+	Make the written grant with OMC_AllocGrant(size, OMCAF_PAGE): a board
+	maps written memory by 4 KB page, and code sharing a page with it
+	runs through the board's byte-exact callbacks, far slower.
+
 	A range on a board uses up to as many cores as the board has (at
 	most 32). ENV:OpenMulticore/RangeCores, when set as the library makes
 	its connection, caps that: OMCBench uses it to measure.
@@ -436,7 +440,7 @@ openmulticore.library/OMC_SubmitRange         openmulticore.library/OMC_SubmitRa
    EXAMPLE
 	LONG square(ULONG i, ULONG *out) { out[i] = i * i; return 0; }
 	...
-	ULONG args[1], failed, *out = OMC_AllocGrant(n * 4, 0);
+	ULONG args[1], failed, *out = OMC_AllocGrant(n * 4, OMCAF_PAGE);
 	OMC_JobInit(&job);
 	job.omj_Entry = (APTR)square;
 	args[0] = (ULONG)out; job.omj_Args = args; job.omj_NArgs = 1;

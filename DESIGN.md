@@ -305,26 +305,36 @@ Built (0.3, 12 October 2026), at the end of the table; a program checks
   the slices of the indices that returned are written, the failed one's
   left as it was.
 - Named cores up to 31.
+- **Run blocks and stacks on pages of their own.** A board maps a job's
+  written memory by 4 KB page, and a page it only partly writes goes
+  through the board's byte-exact callbacks: a library stack that happened
+  to share a page with the program's code made that code run that way, a
+  hundred times slower (a lone job of a million turns took 352 ms instead
+  of 2.3 ms in one run). 0.3 allocates them page-aligned and in whole
+  pages; a program's own written grants are best made with
+  `OMC_AllocGrant(size, OMCAF_PAGE)` for the same reason.
 
 Measured (OMCBench, `tools/omcbench.c`, a lab copy of an OS 3.2.3 instance
 on a runtime built from AmigaChrome's branch of 12 October: a 10-core board
 on a host with 6 cores and 12 threads, under other work; E-clock times):
 
-| | microseconds |
+| | microseconds (three runs) |
 | --- | --- |
-| An empty job on the main CPU | 3 |
-| An empty job on a board, one at a time | 137 (1,191 before the runtime's changes below) |
-| The same, 16 in flight | 74 |
-| What 0.2's connection per job added on top | 67 to 133 |
-| An empty RANGE index | 0.7 (8.9 before) |
+| An empty job on the main CPU | 2 to 3 |
+| An empty job on a board, one at a time | 173 to 218 (1,191 before the runtime's changes below) |
+| The same, 16 in flight | 56 to 80 (124 before) |
+| What 0.2's connection per job added on top | 88 to 111 |
+| An empty RANGE index | 0.6 to 0.7 (8.9 before) |
 
-64 items of 2 million turns of a loop: 229 ms on the main CPU; 57 ms as 64
-separate jobs (4.0 times); 39 to 45 ms as one range on all ten cores (5.0 to
-5.7 times), and as one range on 1, 2, 4, 6, 8 and 10 cores 0.99, 1.67, 3.15,
-4.65, 5.54 and 5.74 times. The main CPU kept 90% of its own speed with every
-core busy. So a lone job is worth a board above about 100,000 turns of a
-loop (a job's round trip is about 140 us), and any number of independent
-items is worth a range.
+64 items of 2 million turns of a loop: 219 to 228 ms on the main CPU; 42 to
+72 ms as 64 separate jobs (3.2 to 5.3 times); 35 to 39 ms as one range on all
+ten cores (5.7 to 6.4 times), and as one range on 1, 2, 4, 6, 8 and 10 cores
+about 1, 1.8, 3.1, 4.2, 5.4 and 5.7 times. The main CPU kept 92 to 100% of
+its own speed with every core busy. A lone job of a million turns took
+about as long on a board core as on the main CPU (2.0 to 2.7 ms against 1.7
+to 2.5). So a lone job is worth a board above about 100,000 turns of a loop
+(its round trip is about 0.2 ms), and any number of independent items is
+worth a range.
 
 The runtime's side of those numbers (AmigaChrome, `CORES_BOARD.md` section
 0c): a core keeps what its jobs read mapped from one job to the next (a job
@@ -332,14 +342,12 @@ that may read all Fast RAM no longer maps 512 MB again, nor translates its
 code again), runs a range's indices back to back, and a completion wakes
 the idle machine at once instead of at its next millisecond step.
 
-Strict jobs (OMCF_STRICT) run their code through the board's byte-exact
-callbacks wherever it lies in a 4 KB page they are not wholly granted, and a
+Strict jobs (OMCF_STRICT) run their code through the same callbacks
+wherever it lies in a 4 KB page they are not wholly granted, and a
 program's hunks rarely fill whole pages: with OMCBench STRICT the 64 work
 items ran about forty times slower than permissive ones. Granting execute
 grants by whole pages on the board would fix it, at the cost of strict
 reads being exact only to the page for code; that is the Team's call.
-Also to look at: a lone job's loop of a million turns took up to twice the
-main CPU's time on a board core in some runs.
 
 Designed, not built:
 

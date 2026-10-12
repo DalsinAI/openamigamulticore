@@ -347,10 +347,39 @@ static LONG board_open(struct OMCJob *job, struct OMCBase *base)
     return io->os_Service;
 }
 
+/* Memory right for a grant (OMC_AllocGrant's): Fast RAM when there is any,
+ * aligned to and rounded up to 64-byte lines, or with OMCAF_PAGE to 4 KB
+ * pages. The run blocks and stacks the library makes are on pages of their
+ * own (0.3): a board maps a job's written memory by page, and a stack that
+ * shared a page with the program's code made that code run through the
+ * board's byte-exact callbacks, a hundred times slower. */
+static APTR grant_alloc(ULONG size, ULONG flags)
+{
+    ULONG align = (flags & OMCAF_PAGE) ? OMC_PAGESIZE : OMC_ALLOCALIGN;
+    ULONG req = MEMF_PUBLIC | ((flags & OMCAF_CLEAR) ? MEMF_CLEAR : 0);
+    ULONG body, total, p, *h;
+    UBYTE *raw;
+    if (!size || size > 0x7FF00000UL) return NULL;
+    body = (size + align - 1) & ~(align - 1);
+    total = body + align + 16;
+    if (!(raw = AllocMem(total, req | MEMF_FAST)) && !(raw = AllocMem(total, req))) return NULL;
+    p = ((ULONG)raw + 16 + align - 1) & ~(align - 1);
+    h = (ULONG *)p - 4;                                  /* the header, in the line below */
+    h[0] = (ULONG)raw; h[1] = total; h[2] = body; h[3] = GRANT_MAGIC;
+    return (APTR)p;
+}
+static void grant_free(APTR mem)
+{
+    ULONG *h = (ULONG *)mem - 4;
+    if (!mem || h[3] != GRANT_MAGIC) return;             /* not grant_alloc's: left alone */
+    h[3] = 0;
+    FreeMem((APTR)h[0], h[1]);
+}
+
 static void free_job_memory(struct OMCJob *job)
 {
-    if (job->omj_Private[P_BLOCK]) FreeVec((APTR)job->omj_Private[P_BLOCK]);
-    if (job->omj_Private[P_STACK]) FreeVec((APTR)job->omj_Private[P_STACK]);
+    grant_free((APTR)job->omj_Private[P_BLOCK]);
+    grant_free((APTR)job->omj_Private[P_STACK]);
     job->omj_Private[P_BLOCK] = job->omj_Private[P_STACK] = 0;
 }
 
@@ -362,7 +391,8 @@ static UBYTE *job_stack(struct OMCJob *job, ULONG *size)
     ULONG n = job->omj_StackSize ? job->omj_StackSize : DEFAULT_STACK;
     n = (n + 3) & ~3UL;
     if (!s) {
-        if (!(s = AllocVec(n, MEMF_FAST | MEMF_PUBLIC)) && !(s = AllocVec(n, MEMF_ANY | MEMF_PUBLIC))) return NULL;
+        n = (n + OMC_PAGESIZE - 1) & ~(ULONG)(OMC_PAGESIZE - 1);   /* whole pages: the board maps them writable, not through its callbacks */
+        if (!(s = grant_alloc(n, OMCAF_PAGE))) return NULL;
         job->omj_Private[P_STACK] = (ULONG)s;
     }
     for (ULONG i = 0; i < job->omj_NArgs; i++)
@@ -377,8 +407,7 @@ static LONG board_send(struct OMCJob *job, ULONG core)
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     UBYTE *rb, *stack;
     ULONG ssize, flags = 3, extra = 0;   /* buf0 the run block and buf1 the stack, both written */
-    if (!(rb = AllocVec(RUNBLOCK_SIZE, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR)) && !(rb = AllocVec(RUNBLOCK_SIZE, MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR)))
-        return OMCERR_NOMEM;
+    if (!(rb = grant_alloc(RUNBLOCK_SIZE, OMCAF_PAGE | OMCAF_CLEAR))) return OMCERR_NOMEM;
     job->omj_Private[P_BLOCK] = (ULONG)rb;
     if (!(stack = job_stack(job, &ssize))) return OMCERR_NOMEM;
     put32(rb + 0x00, 1);
@@ -445,13 +474,11 @@ static LONG board_send_range(struct OMCJob *job, struct OMCBase *base, ULONG cou
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     UBYTE *rb, *stack;
     ULONG slot = job->omj_StackSize ? job->omj_StackSize : DEFAULT_STACK, nslot = range_cores(base), n, flags = 3, k = 0, next = slice ? 3 : 2;
-    slot = (slot + 3) & ~3UL;
-    if (slot < 1024) slot = 1024;
-    if (!(rb = AllocVec(RUNBLOCK_SIZE, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR)) && !(rb = AllocVec(RUNBLOCK_SIZE, MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR)))
-        return OMCERR_NOMEM;
+    slot = (slot + OMC_PAGESIZE - 1) & ~(ULONG)(OMC_PAGESIZE - 1);   /* whole pages each: a board keeps a core's slot mapped */
+    if (!(rb = grant_alloc(RUNBLOCK_SIZE, OMCAF_PAGE | OMCAF_CLEAR))) return OMCERR_NOMEM;
     job->omj_Private[P_BLOCK] = (ULONG)rb;
     n = slot * nslot;
-    if (!(stack = AllocVec(n, MEMF_FAST | MEMF_PUBLIC)) && !(stack = AllocVec(n, MEMF_ANY | MEMF_PUBLIC))) return OMCERR_NOMEM;
+    if (!(stack = grant_alloc(n, OMCAF_PAGE))) return OMCERR_NOMEM;
     job->omj_Private[P_STACK] = (ULONG)stack;
     for (ULONG i = 0; i < job->omj_NArgs; i++)
         ((ULONG *)(stack + n))[-(LONG)job->omj_NArgs + (LONG)i] = job->omj_Args[i];
@@ -625,7 +652,7 @@ static LONG run_range_local(struct OMCJob *job, ULONG count, ULONG *failed)
     for (ULONG i = 0; i < n0; i++) a[1 + i] = args0[i];
     if (!stack0) {
         ULONG size = ((size0 ? size0 : DEFAULT_STACK) + 3) & ~3UL;
-        if (!(own = AllocVec(size, MEMF_FAST | MEMF_PUBLIC)) && !(own = AllocVec(size, MEMF_ANY | MEMF_PUBLIC))) return job->omj_Status = OMCERR_NOMEM;
+        if (!(own = grant_alloc(size, OMCAF_PAGE))) return job->omj_Status = OMCERR_NOMEM;
         job->omj_Stack = own; job->omj_StackSize = size;
     }
     job->omj_Args = a; job->omj_NArgs = n0 + 1;
@@ -636,7 +663,7 @@ static LONG run_range_local(struct OMCJob *job, ULONG count, ULONG *failed)
         run_local(job);
     }
     job->omj_Args = args0; job->omj_NArgs = n0; job->omj_Stack = stack0; job->omj_StackSize = size0;
-    if (own) FreeVec(own);
+    grant_free(own);
     if (failed) *failed = count;
     job->omj_Where = OMCW_CPU0;
     job->omj_Status = OMCERR_OK;
@@ -919,26 +946,12 @@ static LONG OMC_AddGrant(REG(a0, struct OMCJob *job), REG(a1, APTR addr), REG(d0
  * pages), so nothing else shares its cache lines. */
 static APTR OMC_AllocGrant(REG(d0, ULONG size), REG(d1, ULONG flags), REG(a6, struct OMCBase *base))
 {
-    ULONG align = (flags & OMCAF_PAGE) ? OMC_PAGESIZE : OMC_ALLOCALIGN;
-    ULONG req = MEMF_PUBLIC | ((flags & OMCAF_CLEAR) ? MEMF_CLEAR : 0);
-    ULONG body, total, p, *h;
-    UBYTE *raw;
-    if (!size || size > 0x7FF00000UL) return NULL;
-    body = (size + align - 1) & ~(align - 1);
-    total = body + align + 16;
-    if (!(raw = AllocMem(total, req | MEMF_FAST)) && !(raw = AllocMem(total, req))) return NULL;
-    p = ((ULONG)raw + 16 + align - 1) & ~(align - 1);
-    h = (ULONG *)p - 4;                                  /* the header, in the line below */
-    h[0] = (ULONG)raw; h[1] = total; h[2] = body; h[3] = GRANT_MAGIC;
-    return (APTR)p;
+    return grant_alloc(size, flags);
 }
 
 static void OMC_FreeGrant(REG(a0, APTR mem), REG(a6, struct OMCBase *base))
 {
-    ULONG *h = (ULONG *)mem - 4;
-    if (!mem || h[3] != GRANT_MAGIC) return;             /* not OMC_AllocGrant's: left alone */
-    h[3] = 0;
-    FreeMem((APTR)h[0], h[1]);
+    grant_free(mem);                                     /* not OMC_AllocGrant's: left alone */
 }
 
 /* From the next OMC_Submit on, sigmask (one signal bit task has allocated)

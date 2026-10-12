@@ -288,7 +288,7 @@ int main(void)
         CloseDevice((struct IORequest *)&treq);
         return 20;
     }
-    if (!(out = OMC_AllocGrant(256 * 16, OMCAF_CLEAR))) return 20;
+    if (!(out = OMC_AllocGrant(256 * 16, OMCAF_CLEAR | OMCAF_PAGE))) return 20;   /* pages of its own, apart from the code */
     units = OMC_CoreCount();
     Printf((STRPTR)"OMCBench: openmulticore.library %ld.%ld, %ld cores on the board, %s jobs\n\n", (LONG)OpenMulticoreBase->lib_Version,
            (LONG)OpenMulticoreBase->lib_Revision, units, (LONG)(strict ? "strict" : "permissive"));
