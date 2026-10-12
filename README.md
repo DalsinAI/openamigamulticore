@@ -69,6 +69,24 @@ returned as a status, and a strict job all pass. Jobs aimed at a named core
 wait for the board to accept the core number (request bits 24 to 28), which
 the AC090 work is adding.
 
+## openmulticore.library 0.3
+
+0.3 (12 October 2026) adds two calls at the end of the table; 0.1 and 0.2
+programs keep working, and a program checks `OMC_HAS_RANGE(OpenMulticoreBase)`
+before it uses them:
+
+- `OMC_SubmitRange`, `OMC_RunRange`: one worker over an index range, on
+  every core at once through the board's RANGE, or index by index on the
+  main CPU, with each index writing its own slice of one output;
+- and the library keeps one connection to the board's service instead of
+  making one for every job, and names cores up to 31.
+
+`tools/omctest.c` tests the range calls; `tools/omcbench.c` (OMCBench)
+measures what work is worth a board: an empty job's cost, the break-even
+size, throughput as jobs and as ranges on 1 to all cores, and the main
+CPU's speed while every core works (`DESIGN.md` section 4 has the numbers).
+`library/build.sh` builds all three.
+
 ## Licence and credit
 
 OpenMulticore is free software under the MIT licence (`LICENSE`,

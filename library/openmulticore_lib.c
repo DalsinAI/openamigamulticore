@@ -12,7 +12,13 @@
  * later. 0.2 adds, at the end of the table: OMC_JobInit, OMC_AddGrant
  * (the grant rules checked as each is added), OMC_AllocGrant and
  * OMC_FreeGrant (memory right for a grant), and OMC_SetSignal (a signal
- * when a job can be collected, with no signal bit held per job).
+ * when a job can be collected, with no signal bit held per job). 0.3 keeps
+ * one connection to the service for the library, opened by the first job
+ * that needs it, so a job costs one round trip instead of four (OPEN,
+ * WHERE, the job, CLOSE); adds OMC_SubmitRange and OMC_RunRange (one
+ * function over an index range, on every core at once through the board's
+ * RANGE, or index by index on the main CPU); and takes named cores up to
+ * 31.
  *
  * Built bare by library/build.sh (no startup code, no C library).
  */
@@ -25,6 +31,7 @@
 #include <exec/ports.h>
 #include <exec/io.h>
 #include <exec/errors.h>
+#include <exec/semaphores.h>
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <dos/var.h>
@@ -39,7 +46,7 @@
 
 #define REG(r, decl) register decl __asm(#r)   /* bebbo gcc: an argument in a register */
 #define LIB_VERSION 0
-#define LIB_REVISION 2
+#define LIB_REVISION 3
 
 #define DALSIN        0xDA15
 #define CORES_PRODUCT 7
@@ -50,6 +57,9 @@
 
 #define OP_RUNX   2
 #define OP_INFO   3
+#define OP_RANGE  4                 /* CORES_BOARD.md section 1, 12 Oct 2026 */
+#define INFO_RANGE (1UL << 16)      /* INFO's aux: the board has RANGE */
+#define RANGE_MAXSLOTS 32           /* stacks a RANGE request carries: the cores it can use at once */
 #define OP_CANCEL 0xFFFF
 
 #define RUNBLOCK_SIZE 0x170         /* the run block with its 16 grants (CORES_BOARD.md section 1) */
@@ -62,13 +72,14 @@
 #define P_BLOCK   3
 #define P_STACK   4
 #define P_SIGMASK 5                 /* OMC_SetSignal's mask, or 0 */
-#define P_SWAP    6                 /* a StackSwapStruct: 6, 7, 8 */
+#define P_SWAP    6                 /* a StackSwapStruct: 6, 7, 8 (the main CPU's; a range on a board keeps its out pointer in 6) */
+#define P_FAILED  6
 #define P_FPU     9
 #define P_OPEN    10                /* OPEN_ bits */
 #define P_SIGTASK 11                /* OMC_SetSignal's task */
 
-#define OPEN_SERVICE 1              /* the service is open on P_IO */
 #define OPEN_SIGPORT 2              /* P_PORT is the signal port: the job holds no signal bit of its own */
+#define OPEN_RANGE   4              /* a RANGE request: P_FAILED is where its failing index goes */
 
 #define GRANT_MAGIC 0x4F4D4347UL    /* 'OMCG': OMC_AllocGrant's header, just below the memory */
 
@@ -76,6 +87,13 @@ struct OMCBase {
     struct Library lib;
     BPTR seglist;
     struct Library *dos;
+    /* 0.3: the connection every job's request is a copy of (conn_get) */
+    struct SignalSemaphore sem;
+    struct OSRequest *conn;         /* openservice.device open, cpu.m68k/1's handle in os_Service */
+    LONG conn_state;                /* 0 not tried yet, 1 open, -1 no service (tried again after the last close) */
+    ULONG where;                    /* OMCW_BOARD or OMCW_LAN */
+    ULONG units, info;              /* INFO's result and aux (0 when it did not answer) */
+    ULONG range_max;                /* ENV:OpenMulticore/RangeCores when the connection was made (0: not set) */
 };
 
 struct ExecBase *SysBase;
@@ -84,7 +102,7 @@ struct DosLibrary *DOSBase;
 int start(void) { return -1; }      /* run as a program: nothing (stays first in the file) */
 
 static const char lib_name[] = OPENMULTICORE_NAME;
-static const char lib_id[] = "openmulticore.library 0.2 (8.10.2026) OpenMulticore, Dalsin Limited\r\n";
+static const char lib_id[] = "openmulticore.library 0.3 (12.10.2026) OpenMulticore, Dalsin Limited\r\n";
 static const char service_name[] = "cpu.m68k/1";
 
 static struct Library *lib_init(REG(d0, struct OMCBase *base), REG(a0, BPTR seglist), REG(a6, struct ExecBase *sys));
@@ -105,6 +123,8 @@ static LONG OMC_AddGrant(REG(a0, struct OMCJob *job), REG(a1, APTR addr), REG(d0
 static APTR OMC_AllocGrant(REG(d0, ULONG size), REG(d1, ULONG flags), REG(a6, struct OMCBase *base));
 static void OMC_FreeGrant(REG(a0, APTR mem), REG(a6, struct OMCBase *base));
 static LONG OMC_SetSignal(REG(a0, struct OMCJob *job), REG(a1, struct Task *task), REG(d0, ULONG sigmask), REG(a6, struct OMCBase *base));
+static LONG OMC_SubmitRange(REG(a0, struct OMCJob *job), REG(d0, ULONG count), REG(d1, ULONG slice), REG(a1, ULONG *failed), REG(a6, struct OMCBase *base));
+static LONG OMC_RunRange(REG(a0, struct OMCJob *job), REG(d0, ULONG count), REG(d1, ULONG slice), REG(a1, ULONG *failed), REG(a6, struct OMCBase *base));
 
 static const APTR lib_vectors[] = {
     (APTR)lib_open, (APTR)lib_close, (APTR)lib_expunge, (APTR)lib_null,
@@ -112,6 +132,8 @@ static const APTR lib_vectors[] = {
     (APTR)OMC_Wait, (APTR)OMC_Check, (APTR)OMC_Abort, (APTR)OMC_GrantSeg,
     /* 0.2: new calls only ever go on the end */
     (APTR)OMC_JobInit, (APTR)OMC_AddGrant, (APTR)OMC_AllocGrant, (APTR)OMC_FreeGrant, (APTR)OMC_SetSignal,
+    /* 0.3 */
+    (APTR)OMC_SubmitRange, (APTR)OMC_RunRange,
     (APTR)-1,
 };
 static const struct { ULONG size; const APTR *vectors; APTR data; APTR init; } lib_inittable = {
@@ -131,6 +153,7 @@ static struct Library *lib_init(REG(d0, struct OMCBase *base), REG(a0, BPTR segl
     base->lib.lib_Revision = LIB_REVISION;
     base->dos = OpenLibrary("dos.library", 37);
     DOSBase = (struct DosLibrary *)base->dos;
+    InitSemaphore(&base->sem);
     return &base->lib;
 }
 static struct Library *lib_open(REG(a6, struct OMCBase *base))
@@ -139,9 +162,11 @@ static struct Library *lib_open(REG(a6, struct OMCBase *base))
     base->lib.lib_Flags &= ~LIBF_DELEXP;
     return &base->lib;
 }
+static void conn_close(struct OMCBase *base);
 static BPTR lib_close(REG(a6, struct OMCBase *base))
 {
     base->lib.lib_OpenCnt--;
+    if (base->lib.lib_OpenCnt == 0) conn_close(base);   /* no program has a job any more: the connection goes */
     if (base->lib.lib_OpenCnt == 0 && (base->lib.lib_Flags & LIBF_DELEXP))
         return lib_expunge(base);
     return 0;
@@ -177,6 +202,86 @@ static volatile UBYTE *cores_board(void)
     return b;
 }
 
+/* ---- the kept connection (0.3) ------------------------------------------------- */
+
+/* openservice.device opened and cpu.m68k/1 found once, by the first job that
+ * needs a board, with INFO asked: 1, or -1 when there is no service (asked
+ * again after the last program closes the library). Every job's request is
+ * a copy of this one (io_Device, io_Unit, the handle): 0.2 opened the
+ * device and the service for each job, three more round trips (OPEN, WHERE,
+ * CLOSE) and an OpenDevice per job. */
+static LONG conn_get(struct OMCBase *base)
+{
+    LONG st;
+    ObtainSemaphore(&base->sem);
+    if (!base->conn_state) {
+        struct MsgPort *port = CreateMsgPort();
+        struct OSRequest *io = port ? (struct OSRequest *)CreateIORequest(port, sizeof *io) : NULL;
+        base->conn_state = -1;
+        if (io && !OpenDevice((STRPTR)OPENSERVICE_NAME, 0, (struct IORequest *)io, 0)) {
+            zero(io->os_Buf, sizeof io->os_Buf);
+            io->os_Buf[0].ob_Data = (APTR)service_name;
+            io->os_Buf[0].ob_Length = sizeof service_name - 1;
+            io->os_Flags = 0;
+            io->os_Req.io_Command = OSCMD_OPEN;
+            DoIO((struct IORequest *)io);
+            if (!io->os_Req.io_Error && !io->os_Status) {
+                io->os_Service = (UWORD)io->os_Result;
+                io->os_Req.io_Command = OSCMD_WHERE;
+                DoIO((struct IORequest *)io);
+                base->where = io->os_Result == OSWHERE_LAN ? OMCW_LAN : OMCW_BOARD;
+                zero(io->os_Buf, sizeof io->os_Buf);       /* INFO: units, engine, and whether RANGE is there */
+                io->os_Req.io_Command = OSCMD_CALL;
+                io->os_Op = OP_INFO; io->os_Flags = 0; io->os_Arg = 0;
+                io->os_Extra[0] = io->os_Extra[1] = io->os_Extra[2] = io->os_Extra[3] = 0;
+                DoIO((struct IORequest *)io);
+                base->units = !io->os_Req.io_Error && !io->os_Status ? io->os_Result : 0;
+                base->info = !io->os_Req.io_Error && !io->os_Status ? io->os_Aux : 0;
+                base->range_max = 0;
+                {
+                    char buf[16];
+                    if (base->dos && GetVar((STRPTR)"OpenMulticore/RangeCores", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY) > 0)
+                        for (char *p = buf; *p >= '0' && *p <= '9'; p++) base->range_max = base->range_max * 10 + (ULONG)(*p - '0');
+                }
+                io->os_Req.io_Message.mn_ReplyPort = NULL;    /* a template only: jobs copy it, with ports of their own */
+                base->conn = io;
+                base->conn_state = 1;
+                io = NULL;
+            } else CloseDevice((struct IORequest *)io);
+        }
+        if (io) DeleteIORequest((struct IORequest *)io);
+        if (port) DeleteMsgPort(port);
+    }
+    st = base->conn_state;
+    ReleaseSemaphore(&base->sem);
+    return st;
+}
+
+/* The last program has closed the library: the handle back, the device
+ * closed. Taken off the base first, so a program opening the library
+ * meanwhile makes a connection of its own. */
+static void conn_close(struct OMCBase *base)
+{
+    struct OSRequest *io;
+    struct MsgPort *port;
+    ObtainSemaphore(&base->sem);
+    io = base->conn;
+    base->conn = NULL;
+    base->conn_state = 0;
+    base->units = base->info = 0;
+    ReleaseSemaphore(&base->sem);
+    if (!io) return;
+    if ((port = CreateMsgPort())) {
+        io->os_Req.io_Message.mn_ReplyPort = port;
+        io->os_Req.io_Command = OSCMD_CLOSE;
+        DoIO((struct IORequest *)io);
+    }
+    CloseDevice((struct IORequest *)io);
+    if (port) io->os_Req.io_Message.mn_ReplyPort = NULL;
+    DeleteIORequest((struct IORequest *)io);
+    if (port) DeleteMsgPort(port);
+}
+
 /* ---- the board, through openservice.device ------------------------------------- */
 
 /* A port on the signal OMC_SetSignal gave: no signal bit of its own. */
@@ -207,29 +312,13 @@ static void signal_again(struct OMCJob *job)
     if (mask) Signal((struct Task *)job->omj_Private[P_SIGTASK], mask);
 }
 
+/* The job's copy of the connection's request, and its port. */
 static void board_close(struct OMCJob *job)
 {
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     struct MsgPort *port = (struct MsgPort *)job->omj_Private[P_PORT];
     ULONG open = job->omj_Private[P_OPEN];
-    if (io) {
-        if (io->os_Req.io_Device && (open & OPEN_SERVICE)) {
-            struct MsgPort *tmp = NULL;
-            int ok = 1;
-            if (open & OPEN_SIGPORT) {                     /* wait on a port of this task's own */
-                if ((tmp = CreateMsgPort())) io->os_Req.io_Message.mn_ReplyPort = tmp;
-                else ok = FindTask(NULL) == port->mp_SigTask;
-            }
-            if (ok) {
-                io->os_Req.io_Command = OSCMD_CLOSE;       /* the service's handle back */
-                DoIO((struct IORequest *)io);
-                if ((open & OPEN_SIGPORT) && !tmp) signal_again(job);
-            }
-            if (tmp) DeleteMsgPort(tmp);
-        }
-        if (io->os_Req.io_Device) CloseDevice((struct IORequest *)io);
-        DeleteIORequest((struct IORequest *)io);
-    }
+    if (io) DeleteIORequest((struct IORequest *)io);    /* a copy: never opened, so nothing to close */
     if (port) {
         if (open & OPEN_SIGPORT) FreeMem(port, sizeof *port);
         else DeleteMsgPort(port);
@@ -237,40 +326,24 @@ static void board_close(struct OMCJob *job)
     job->omj_Private[P_IO] = job->omj_Private[P_PORT] = job->omj_Private[P_OPEN] = 0;
 }
 
-/* openservice.device opened, and cpu.m68k/1 found, for this job: the handle, or -1. */
-static LONG board_open(struct OMCJob *job)
+/* A request for this job, a copy of the kept connection's: the handle, or -1
+ * (no service, or no memory: the caller's fallback either way). */
+static LONG board_open(struct OMCJob *job, struct OMCBase *base)
 {
-    struct MsgPort *port = CreateMsgPort();
-    struct OSRequest *io = port ? (struct OSRequest *)CreateIORequest(port, sizeof *io) : NULL;
+    struct MsgPort *port;
+    struct OSRequest *io;
+    if (conn_get(base) < 0) return -1;
+    if (job->omj_Private[P_SIGMASK]) port = signal_port(job);   /* the answer comes to a port on the caller's signal */
+    else port = CreateMsgPort();
+    io = port ? (struct OSRequest *)CreateIORequest(port, sizeof *io) : NULL;
     job->omj_Private[P_PORT] = (ULONG)port;
     job->omj_Private[P_IO] = (ULONG)io;
-    if (!io || OpenDevice((STRPTR)OPENSERVICE_NAME, 0, (struct IORequest *)io, 0)) {
-        if (io) io->os_Req.io_Device = NULL;
-        board_close(job);
-        return -1;
-    }
-    zero(io->os_Buf, sizeof io->os_Buf);
-    io->os_Buf[0].ob_Data = (APTR)service_name;
-    io->os_Buf[0].ob_Length = sizeof service_name - 1;
-    io->os_Flags = 0;
-    io->os_Req.io_Command = OSCMD_OPEN;
-    DoIO((struct IORequest *)io);
-    if (io->os_Req.io_Error || io->os_Status) { board_close(job); return -1; }
-    io->os_Service = (UWORD)io->os_Result;
-    job->omj_Private[P_OPEN] = OPEN_SERVICE;
-    io->os_Req.io_Command = OSCMD_WHERE;
-    DoIO((struct IORequest *)io);
-    job->omj_Where = io->os_Result == OSWHERE_LAN ? OMCW_LAN : OMCW_BOARD;
-    if (job->omj_Private[P_SIGMASK]) {
-        /* the job's answer comes to a port on the caller's signal; the port
-         * made above, and its signal bit, go back now */
-        struct MsgPort *sp = signal_port(job);
-        if (!sp) { board_close(job); return -1; }
-        io->os_Req.io_Message.mn_ReplyPort = sp;
-        DeleteMsgPort(port);
-        job->omj_Private[P_PORT] = (ULONG)sp;
-        job->omj_Private[P_OPEN] |= OPEN_SIGPORT;
-    }
+    job->omj_Private[P_OPEN] = job->omj_Private[P_SIGMASK] ? OPEN_SIGPORT : 0;
+    if (!io) { board_close(job); return -1; }
+    io->os_Req.io_Device = base->conn->os_Req.io_Device;
+    io->os_Req.io_Unit = base->conn->os_Req.io_Unit;
+    io->os_Service = base->conn->os_Service;
+    job->omj_Where = base->where;
     return io->os_Service;
 }
 
@@ -352,6 +425,73 @@ static LONG board_send(struct OMCJob *job, ULONG core)
     return 0;
 }
 
+/* The cores a range may use at once: the board's, capped by
+ * ENV:OpenMulticore/RangeCores when that was set as the connection was
+ * made (for measuring), at most RANGE_MAXSLOTS. */
+static ULONG range_cores(struct OMCBase *base)
+{
+    ULONG n = base->units ? base->units : 1;
+    if (base->range_max && base->range_max < n) n = base->range_max;
+    return n > RANGE_MAXSLOTS ? RANGE_MAXSLOTS : n;
+}
+
+/* Sends a range to the board (RANGE, op 4): the run block as RUNX's, buf1
+ * one stack slot of omj_StackSize per core it may use (the arguments at
+ * buf1's top: the board gives every index its own copy after the index),
+ * buf2 the written grant cut into count slices, read grants in buf2 (when
+ * nothing is written), buf3 and the run block's list. 0, or an OMCERR_. */
+static LONG board_send_range(struct OMCJob *job, struct OMCBase *base, ULONG count, ULONG slice)
+{
+    struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
+    UBYTE *rb, *stack;
+    ULONG slot = job->omj_StackSize ? job->omj_StackSize : DEFAULT_STACK, nslot = range_cores(base), n, flags = 3, k = 0, next = slice ? 3 : 2;
+    slot = (slot + 3) & ~3UL;
+    if (slot < 1024) slot = 1024;
+    if (!(rb = AllocVec(RUNBLOCK_SIZE, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR)) && !(rb = AllocVec(RUNBLOCK_SIZE, MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR)))
+        return OMCERR_NOMEM;
+    job->omj_Private[P_BLOCK] = (ULONG)rb;
+    n = slot * nslot;
+    if (!(stack = AllocVec(n, MEMF_FAST | MEMF_PUBLIC)) && !(stack = AllocVec(n, MEMF_ANY | MEMF_PUBLIC))) return OMCERR_NOMEM;
+    job->omj_Private[P_STACK] = (ULONG)stack;
+    for (ULONG i = 0; i < job->omj_NArgs; i++)
+        ((ULONG *)(stack + n))[-(LONG)job->omj_NArgs + (LONG)i] = job->omj_Args[i];
+    put32(rb + 0x00, 1);
+    put32(rb + 0x04, job->omj_Flags & OMCF_STRICT ? 0 : 2);
+    for (int i = 0; i < 15; i++) put32(rb + 0x08 + 4 * i, job->omj_Regs[i]);
+    put32(rb + 0x44, job->omj_FPCR);
+    put32(rb + 0x48, job->omj_TimeoutMS);
+    zero(io->os_Buf, sizeof io->os_Buf);
+    io->os_Buf[0].ob_Data = rb; io->os_Buf[0].ob_Length = RUNBLOCK_SIZE;
+    io->os_Buf[1].ob_Data = stack; io->os_Buf[1].ob_Length = n;
+    for (ULONG g = 0; g < job->omj_NGrants && g < OMC_MAXGRANTS; g++) {
+        const struct OMCGrant *gr = &job->omj_Grants[g];
+        if (!gr->og_Length) continue;
+        if (gr->og_Mode & OMCG_WRITE) {                   /* the one written grant (start_range checked it) */
+            io->os_Buf[2].ob_Data = gr->og_Addr; io->os_Buf[2].ob_Length = gr->og_Length;
+            flags |= 4;
+        } else if (next < 4) {
+            io->os_Buf[next].ob_Data = gr->og_Addr; io->os_Buf[next].ob_Length = gr->og_Length;
+            next++;
+        } else if (k >= 16) {
+            return OMCERR_BADJOB;                         /* too many */
+        } else {
+            UBYTE *e = rb + 0x70 + 16 * k++;
+            put32(e, (ULONG)gr->og_Addr); put32(e + 4, gr->og_Length); put32(e + 8, (gr->og_Mode & 5) ? gr->og_Mode & 5 : OMCG_READ);
+            put32(rb + 0x4C, k);
+        }
+    }
+    io->os_Req.io_Command = OSCMD_CALL;
+    io->os_Op = OP_RANGE;
+    io->os_Flags = flags;
+    io->os_Arg = (ULONG)job->omj_Entry;
+    io->os_Extra[0] = job->omj_NArgs; io->os_Extra[1] = count; io->os_Extra[2] = slice; io->os_Extra[3] = slot;
+    io->os_Status = 0;
+    job->omj_Private[P_OPEN] |= OPEN_RANGE;
+    SendIO((struct IORequest *)io);
+    job->omj_Private[P_STATE] = 1;
+    return 0;
+}
+
 /* The board's answer into the job. */
 static LONG board_finish(struct OMCJob *job)
 {
@@ -376,7 +516,11 @@ static LONG board_finish(struct OMCJob *job)
         job->omj_FaultVector = get32(rb + 0x4C);
         job->omj_FaultPC = get32(rb + 0x50);
     }
-    if (status == OMCERR_FAULT && !job->omj_FaultVector) { job->omj_FaultVector = io->os_Result; job->omj_FaultPC = io->os_Aux; }
+    if (job->omj_Private[P_OPEN] & OPEN_RANGE) {       /* the lowest failing index (count: none failed), from aux */
+        ULONG *failed = (ULONG *)job->omj_Private[P_FAILED];
+        if (failed) *failed = io->os_Req.io_Error ? 0 : io->os_Aux;
+        job->omj_Private[P_FAILED] = 0;
+    } else if (status == OMCERR_FAULT && !job->omj_FaultVector) { job->omj_FaultVector = io->os_Result; job->omj_FaultPC = io->os_Aux; }
     job->omj_Status = status;
     job->omj_Private[P_STATE] = 2;
     board_close(job);
@@ -468,6 +612,38 @@ static LONG run_local(struct OMCJob *job)
     return OMCERR_OK;
 }
 
+/* A range on the main CPU: the worker called for each index in turn, as
+ * worker(index, args...) with D0 = index and the job's other registers, on
+ * one stack (the job's, or one allocated for all of them). The registers
+ * out are the last index's. */
+static LONG run_range_local(struct OMCJob *job, ULONG count, ULONG *failed)
+{
+    ULONG regs[15], a[1 + OMC_RANGEMAXARGS], *args0 = job->omj_Args, n0 = job->omj_NArgs, fpcr = job->omj_FPCR, size0 = job->omj_StackSize;
+    APTR stack0 = job->omj_Stack;
+    UBYTE *own = NULL;
+    for (int r = 0; r < 15; r++) regs[r] = job->omj_Regs[r];
+    for (ULONG i = 0; i < n0; i++) a[1 + i] = args0[i];
+    if (!stack0) {
+        ULONG size = ((size0 ? size0 : DEFAULT_STACK) + 3) & ~3UL;
+        if (!(own = AllocVec(size, MEMF_FAST | MEMF_PUBLIC)) && !(own = AllocVec(size, MEMF_ANY | MEMF_PUBLIC))) return job->omj_Status = OMCERR_NOMEM;
+        job->omj_Stack = own; job->omj_StackSize = size;
+    }
+    job->omj_Args = a; job->omj_NArgs = n0 + 1;
+    for (ULONG i = 0; i < count; i++) {
+        for (int r = 0; r < 15; r++) job->omj_Regs[r] = regs[r];
+        job->omj_Regs[0] = i; job->omj_FPCR = fpcr;
+        a[0] = i;
+        run_local(job);
+    }
+    job->omj_Args = args0; job->omj_NArgs = n0; job->omj_Stack = stack0; job->omj_StackSize = size0;
+    if (own) FreeVec(own);
+    if (failed) *failed = count;
+    job->omj_Where = OMCW_CPU0;
+    job->omj_Status = OMCERR_OK;
+    job->omj_Private[P_STATE] = 2;
+    return OMCERR_OK;
+}
+
 /* ---- choosing ------------------------------------------------------------------ */
 
 static ULONG parse_target(const char *s)
@@ -540,7 +716,7 @@ static LONG start_job(struct OMCJob *job, struct OMCBase *base)
         return run_local(job);
     }
     if (target != OMC_ANY) {
-        if (OMC_CORE_BOARD(target) != 1 || OMC_CORE_NUMBER(target) < 1 || OMC_CORE_NUMBER(target) > 8)
+        if (OMC_CORE_BOARD(target) != 1 || OMC_CORE_NUMBER(target) < 1 || OMC_CORE_NUMBER(target) > 31)
             return job->omj_Status = OMCERR_NOCORE;   /* one board in this version */
         core = OMC_CORE_NUMBER(target);
         {
@@ -548,13 +724,49 @@ static LONG start_job(struct OMCJob *job, struct OMCBase *base)
             if (!b || core > *(volatile ULONG *)(b + REG_UNITS)) return job->omj_Status = OMCERR_NOCORE;
         }
     }
-    if (board_open(job) < 0) {
+    if (board_open(job, base) < 0) {
         if (target != OMC_ANY || (job->omj_Flags & OMCF_BOARD)) return job->omj_Status = OMCERR_NOCORE;
         return run_local(job);                          /* no board: the main CPU, the same function */
     }
     {
         LONG r = board_send(job, core);
         if (r) { board_close(job); free_job_memory(job); job->omj_Private[P_STATE] = 2; return job->omj_Status = r; }
+    }
+    return 0;
+}
+
+/* Starts a range where it goes: the board's RANGE when it has one, else the
+ * main CPU, index by index. 0, or an OMCERR_ (the job's status too). */
+static LONG start_range(struct OMCJob *job, struct OMCBase *base, ULONG count, ULONG slice, ULONG *failed)
+{
+    ULONG target = job->omj_Target, written = 0, wlen = 0;
+    if (job->omj_Private[P_STATE] == 1) return job->omj_Status = OMCERR_BADJOB;
+    job->omj_Private[P_STATE] = 0;
+    job->omj_Status = OMCERR_OK;
+    for (ULONG g = 0; g < job->omj_NGrants && g < OMC_MAXGRANTS; g++)
+        if ((job->omj_Grants[g].og_Mode & OMCG_WRITE) && job->omj_Grants[g].og_Length) { written++; wlen = job->omj_Grants[g].og_Length; }
+    /* the rules a board would apply, checked everywhere, so a program tried on CPU0 is right for a board:
+     * one written grant cut into slices, or none; at most OMC_RANGEMAXARGS arguments; any core */
+    if (slice ? written != 1 || (count && slice > wlen / count) : written != 0) return job->omj_Status = OMCERR_BADJOB;
+    if (job->omj_NArgs > OMC_RANGEMAXARGS || (target != OMC_ANY && target != OMC_CPU0)) return job->omj_Status = OMCERR_BADJOB;
+    if (target == OMC_ANY && !(job->omj_Flags & (OMCF_NOBOARD | OMCF_BOARD)) && user_target(base) == OMC_CPU0) target = OMC_CPU0;
+    if (target == OMC_CPU0 || (job->omj_Flags & OMCF_NOBOARD)) {
+        if (job->omj_Flags & OMCF_BOARD) return job->omj_Status = OMCERR_NOCORE;
+        return run_range_local(job, count, failed);
+    }
+    if (!count) {                                        /* nothing to run */
+        if (failed) *failed = 0;
+        job->omj_Private[P_STATE] = 2;
+        return OMCERR_OK;
+    }
+    if (conn_get(base) < 0 || !(base->info & INFO_RANGE) || board_open(job, base) < 0) {
+        if (job->omj_Flags & OMCF_BOARD) return job->omj_Status = OMCERR_NOCORE;
+        return run_range_local(job, count, failed);      /* no board, or one without RANGE: the main CPU, the same worker */
+    }
+    job->omj_Private[P_FAILED] = (ULONG)failed;
+    {
+        LONG r = board_send_range(job, base, count, slice);
+        if (r) { board_close(job); free_job_memory(job); job->omj_Private[P_FAILED] = 0; job->omj_Private[P_STATE] = 2; return job->omj_Status = r; }
     }
     return 0;
 }
@@ -584,7 +796,8 @@ static BOOL OMC_CoreInfo(REG(d0, ULONG n), REG(a0, struct OMCCoreInfo *info), RE
     if (!(b = cores_board()) || n > *(volatile ULONG *)(b + REG_UNITS)) return FALSE;
     info->oci_Board = 1; info->oci_Core = n;
     info->oci_ISAs = *(volatile ULONG *)(b + REG_ISAS) | 1;
-    info->oci_Model = 0x68040; info->oci_Engine = 2;      /* the board's cores: translated 68040s */
+    info->oci_Model = 0x68040;                            /* the board's cores: 68040s with their FPU */
+    info->oci_Engine = base->info & 0xFF ? base->info & 0xFF : 2;   /* INFO's engine, once the connection asked; else translated */
     info->oci_State = *(volatile ULONG *)(b + REG_CORE(n));
     info->oci_Load = *(volatile ULONG *)(b + REG_CORE(n) + 4);
     info->oci_JobsDone = *(volatile ULONG *)(b + REG_CORE(n) + 8);
@@ -742,4 +955,32 @@ static LONG OMC_SetSignal(REG(a0, struct OMCJob *job), REG(a1, struct Task *task
     job->omj_Private[P_SIGMASK] = sigmask;
     job->omj_Private[P_SIGTASK] = sigmask ? (ULONG)task : 0;
     return OMCERR_OK;
+}
+
+/* ---- 0.3 ------------------------------------------------------------------------- */
+
+/* One worker over the indices 0 to count - 1: as worker(index, args...)
+ * with D0 = index, on every core at once through the board's RANGE, or
+ * index by index on the main CPU. With slice, the job's one written grant
+ * is cut into count slices of slice bytes, and index i writes only slice
+ * i. *failed (when given) receives the lowest failing index, or count when
+ * none failed, as the range is collected. */
+static LONG OMC_SubmitRange(REG(a0, struct OMCJob *job), REG(d0, ULONG count), REG(d1, ULONG slice), REG(a1, ULONG *failed), REG(a6, struct OMCBase *base))
+{
+    LONG r;
+    if (!job || !job->omj_Entry) return OMCERR_BADJOB;
+    r = start_range(job, base, count, slice, failed);
+    if (job->omj_Private[P_STATE] != 1 && job->omj_Private[P_SIGMASK])
+        Signal((struct Task *)job->omj_Private[P_SIGTASK], job->omj_Private[P_SIGMASK]);   /* collectable now */
+    return r;
+}
+
+static LONG OMC_RunRange(REG(a0, struct OMCJob *job), REG(d0, ULONG count), REG(d1, ULONG slice), REG(a1, ULONG *failed), REG(a6, struct OMCBase *base))
+{
+    LONG r;
+    if (!job || !job->omj_Entry) return OMCERR_BADJOB;
+    if (job->omj_Private[P_SIGMASK] && (struct Task *)job->omj_Private[P_SIGTASK] != FindTask(NULL))
+        return OMCERR_BADJOB;
+    if ((r = start_range(job, base, count, slice, failed)) || job->omj_Private[P_STATE] == 2) return job->omj_Status;
+    return board_finish(job);
 }

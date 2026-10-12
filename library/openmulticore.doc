@@ -10,13 +10,21 @@ openmulticore.library/OMC_FreeGrant
 openmulticore.library/OMC_GrantSeg
 openmulticore.library/OMC_JobInit
 openmulticore.library/OMC_Run68k
+openmulticore.library/OMC_RunRange
 openmulticore.library/OMC_SetSignal
 openmulticore.library/OMC_Submit
+openmulticore.library/OMC_SubmitRange
 openmulticore.library/OMC_Wait
 
-openmulticore.library 0.2 (8.10.2026). MIT, Copyright (c) 2026 Dalsin
+openmulticore.library 0.3 (12.10.2026). MIT, Copyright (c) 2026 Dalsin
 Limited. The calls marked 0.2 are not in 0.1, whose version number is the
 same (0): test OMC_HAS_JOBCALLS(OpenMulticoreBase) before calling them.
+The calls marked 0.3 are not in 0.2: test OMC_HAS_RANGE(OpenMulticoreBase).
+
+0.3 keeps one connection to the board's service for the library, made by
+the first job that needs it and closed when the last program closes the
+library, so a job on a board costs one request instead of four. Named
+cores go up to 31 (OMC_CORE(1, 1) to OMC_CORE(1, 31)); 0.2 took 8.
 
 A job (struct OMCJob, <libraries/openmulticore.h>) is one call of a 68k
 function: no OS calls, no Chip RAM, no chipset; only its arguments, its
@@ -248,6 +256,28 @@ openmulticore.library/OMC_Run68k                 openmulticore.library/OMC_Run68
    RESULT
 	status - as OMC_Wait(). OMCERR_BADJOB for a job with an
 	         OMC_SetSignal() on another task.
+openmulticore.library/OMC_RunRange               openmulticore.library/OMC_RunRange
+
+   NAME
+	OMC_RunRange -- run one worker over an index range and wait (0.3)
+
+   SYNOPSIS
+	status = OMC_RunRange(job, count, slice, failed)
+	D0                    A0   D0     D1     A1
+
+	LONG OMC_RunRange(struct OMCJob *, ULONG, ULONG, ULONG *);
+
+   FUNCTION
+	OMC_SubmitRange() and OMC_Wait() in one call.
+
+   INPUTS
+	As OMC_SubmitRange().
+
+   RESULT
+	status - as OMC_Wait() gives for the range (see OMC_SubmitRange()).
+
+   SEE ALSO
+	OMC_SubmitRange(), OMC_Run68k()
 openmulticore.library/OMC_SetSignal             openmulticore.library/OMC_SetSignal
 
    NAME
@@ -335,6 +365,86 @@ openmulticore.library/OMC_Submit                 openmulticore.library/OMC_Submi
 
    SEE ALSO
 	OMC_Wait(), OMC_Check(), OMC_Abort(), OMC_SetSignal()
+openmulticore.library/OMC_SubmitRange         openmulticore.library/OMC_SubmitRange
+
+   NAME
+	OMC_SubmitRange -- start one worker over an index range (0.3)
+
+   SYNOPSIS
+	error = OMC_SubmitRange(job, count, slice, failed)
+	D0                      A0   D0     D1     A1
+
+	LONG OMC_SubmitRange(struct OMCJob *, ULONG, ULONG, ULONG *);
+
+   FUNCTION
+	Runs the job's function once for each index 0 to count - 1, as
+	worker(index, args...): D0 is the index too, the other registers are
+	the job's, and the job's omj_Args follow the index on the stack. On a
+	cores board with RANGE (AmigaChrome's, from 12 October 2026) it is one
+	request: every free core takes the next index as it comes free, and
+	one completion ends the range. Elsewhere (no board, OMC_CPU0 or
+	OMCF_NOBOARD, or a board without RANGE) the main CPU calls the worker
+	for each index in turn before this returns, so a program has one code
+	path.
+
+	With slice, the job's one written grant is cut into count slices of
+	slice bytes: index i writes only bytes [i * slice, (i + 1) * slice),
+	its own output. Other grants are read only, as for any job.
+
+	Collect it with OMC_Wait() (OMC_Check() says when), as a job: then
+	omj_Status is the range's status, the registers are those of the
+	lowest failing index, else of the last index (count - 1), and *failed
+	holds the lowest failing index, or count when none failed.
+
+   INPUTS
+	job    - the worker in omj_Entry, its registers, omj_Args (at most
+	         OMC_RANGEMAXARGS, after the index), grants, omj_StackSize
+	         (each core's stack; 1 KB at least), omj_TimeoutMS (for the
+	         whole range), omj_Flags (OMCF_STRICT, OMCF_NOBOARD,
+	         OMCF_BOARD). omj_Target OMC_ANY or OMC_CPU0.
+	count  - the indices. 0 runs nothing.
+	slice  - bytes of the written grant each index writes; 0 when the
+	         job has no written grant.
+	failed - where the lowest failing index goes, or NULL.
+
+   RESULT
+	error - OMCERR_OK when the range started (on the main CPU: ran), or:
+	        OMCERR_BADJOB  no job or entry; a job on a board now; slice
+	                       given without exactly one written grant, or a
+	                       written grant without slice; count slices past
+	                       the written grant; more than OMC_RANGEMAXARGS
+	                       arguments; a named core.
+	        OMCERR_NOCORE  OMCF_BOARD and no board with RANGE.
+	        OMCERR_NOMEM.
+
+	The range's own status, collected with OMC_Wait(): OMCERR_OK, or the
+	lowest failing index's: OMCERR_FAULT (omj_FaultVector, omj_FaultPC
+	are that index's), OMCERR_TIMEOUT, OMCERR_CANCEL (OMC_Abort()).
+
+   NOTES
+	After a failure no index starts; those running finish. A failed
+	index's slice is left as it was; the slices of the indices that
+	returned are written, and every index below the lowest failing one
+	returned.
+
+	A range on a board uses up to as many cores as the board has (at
+	most 32). ENV:OpenMulticore/RangeCores, when set as the library makes
+	its connection, caps that: OMCBench uses it to measure.
+
+	Like any job: no OS calls, no Chip RAM, its grants and its stack only.
+
+   EXAMPLE
+	LONG square(ULONG i, ULONG *out) { out[i] = i * i; return 0; }
+	...
+	ULONG args[1], failed, *out = OMC_AllocGrant(n * 4, 0);
+	OMC_JobInit(&job);
+	job.omj_Entry = (APTR)square;
+	args[0] = (ULONG)out; job.omj_Args = args; job.omj_NArgs = 1;
+	OMC_AddGrant(&job, out, OMC_GRANTSIZE(n * 4), OMCG_READ | OMCG_WRITE);
+	OMC_RunRange(&job, n, 4, &failed);
+
+   SEE ALSO
+	OMC_RunRange(), OMC_Wait(), OMC_AddGrant(), OMC_AllocGrant()
 openmulticore.library/OMC_Wait                     openmulticore.library/OMC_Wait
 
    NAME
