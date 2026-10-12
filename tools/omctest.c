@@ -331,8 +331,8 @@ static LONG range_job(struct OMCJob *j, ULONG *a2, APTR fn, ULONG arg, ULONG *ou
 static ULONG test_v03(ULONG units)
 {
     struct OMCJob job;
-    ULONG bad = 0, a2[2], n = 1000, failed, *out = OMC_AllocGrant(4096 * 4, OMCAF_CLEAR);
-    ULONG targets[3] = { OMC_CPU0, OMC_ANY, OMC_ANY };
+    ULONG bad = 0, a2[2], n = 1000, failed, *out = OMC_AllocGrant(4096 * 4, OMCAF_CLEAR | OMCAF_PAGE);
+    ULONG targets[3] = { OMC_CPU0, OMC_ANY, OMC_ANY }, ranged = 0;   /* ranged: the board has RANGE (an any-core range reached it) */
     if (!out) { PutStr((STRPTR)"  FAIL AllocGrant\n"); return 1; }
 
     /* every index's slice, on CPU0, any core, the board only */
@@ -346,12 +346,19 @@ static ULONG test_v03(ULONG units)
         for (ULONG i = 0; i < n; i++) right += out[i] == i * i + 1000;
         Printf((STRPTR)"range of %ld, %s: status %ld on %s, %ld slices right, failed %ld, D0 %ld\n", n,
                (LONG)(t == 0 ? "CPU0" : t == 1 ? "any" : "board only"), job.omj_Status, (LONG)where(job.omj_Where), right, failed, (LONG)job.omj_Regs[0]);
+        if (t == 1) {
+            ranged = job.omj_Where == OMCW_BOARD;
+            if (units && !ranged) PutStr((STRPTR)"  the board has no RANGE (a runtime before 12 October 2026): ranges run on the main CPU\n");
+        }
+        if (t == 2 && !ranged) {                           /* board only, and no board with RANGE: refused */
+            bad += check("board-only range without RANGE", job.omj_Status, OMCERR_NOCORE);
+            continue;
+        }
         if (job.omj_Status || right != n || failed != n || out[n] != 0x5A5A5A5AUL || job.omj_Regs[0] != n - 1) bad++;
-        if (t && units && job.omj_Where != OMCW_BOARD) { PutStr((STRPTR)"  FAIL the range did not reach the board\n"); bad++; }
     }
 
     /* a fault at index 7: the status, the index, the slices below it written and its own not */
-    if (units) {
+    if (ranged) {
         ULONG right = 0;
         for (ULONG i = 0; i < 100; i++) out[i] = 0xEEEEEEEEUL;
         range_job(&job, a2, (APTR)bad_at, 7, out, 100, OMC_ANY, OMCF_BOARD);
