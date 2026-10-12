@@ -1,7 +1,8 @@
-/* openmulticore.library 0.2: run 68k functions on extra cores, or on the
+/* openmulticore.library 0.3: run 68k functions on extra cores, or on the
  * main CPU when there are none (DESIGN.md sections 0 and 4). 0.2 adds
  * OMC_JobInit, OMC_AddGrant, OMC_AllocGrant, OMC_FreeGrant and
- * OMC_SetSignal (library/openmulticore.doc).
+ * OMC_SetSignal; 0.3 adds OMC_SubmitRange and OMC_RunRange
+ * (library/openmulticore.doc).
  * MIT, Copyright (c) 2026 Dalsin Limited. */
 #ifndef LIBRARIES_OPENMULTICORE_H
 #define LIBRARIES_OPENMULTICORE_H
@@ -13,12 +14,18 @@
 #define OPENMULTICORE_NAME    "openmulticore.library"
 #define OPENMULTICORE_VERSION 0
 #define OPENMULTICORE_REVISION_JOBCALLS 2   /* 0.2: the five calls below */
+#define OPENMULTICORE_REVISION_RANGE    3   /* 0.3: OMC_SubmitRange, OMC_RunRange */
 
 /* The library opened is 0.2 or later: OMC_JobInit, OMC_AddGrant,
  * OMC_AllocGrant, OMC_FreeGrant and OMC_SetSignal are there. The version
  * stays 0, so OpenLibrary can't ask for them: check before calling. */
 #define OMC_HAS_JOBCALLS(base) \
     ((base) && ((base)->lib_Version > OPENMULTICORE_VERSION || (base)->lib_Revision >= OPENMULTICORE_REVISION_JOBCALLS))
+/* 0.3 or later: OMC_SubmitRange and OMC_RunRange are there. */
+#define OMC_HAS_RANGE(base) \
+    ((base) && ((base)->lib_Version > OPENMULTICORE_VERSION || (base)->lib_Revision >= OPENMULTICORE_REVISION_RANGE))
+/* A range's worker gets the index first, then at most this many of the job's omj_Args. */
+#define OMC_RANGEMAXARGS 16
 
 /* Memory a job may use besides its stack, by address and length. */
 struct OMCGrant {
@@ -48,7 +55,7 @@ struct OMCGrant {
 /* Where a job runs (omj_Target). */
 #define OMC_ANY            0UL                    /* the library chooses (the default) */
 #define OMC_CPU0           0xFFFFFFFFUL           /* the main CPU, on the caller's task */
-#define OMC_CORE(board, n) (0x10000UL | ((ULONG)(board) << 8) | (ULONG)(n))   /* board 1.., core 1..8 */
+#define OMC_CORE(board, n) (0x10000UL | ((ULONG)(board) << 8) | (ULONG)(n))   /* board 1.., core 1..31 (1..8 before 0.3) */
 #define OMC_CORE_BOARD(t)  (((t) >> 8) & 0xFF)
 #define OMC_CORE_NUMBER(t) ((t) & 0xFF)
 

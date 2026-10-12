@@ -36,4 +36,9 @@
     LP1NR(0x60, OMC_FreeGrant, APTR, mem, a0, , OPENMULTICORE_BASE_NAME)
 #define OMC_SetSignal(job, task, sigmask) \
     LP3(0x66, LONG, OMC_SetSignal, struct OMCJob *, job, a0, struct Task *, task, a1, ULONG, sigmask, d0, , OPENMULTICORE_BASE_NAME)
+/* 0.3 (check OMC_HAS_RANGE first) */
+#define OMC_SubmitRange(job, count, slice, failed) \
+    LP4(0x6c, LONG, OMC_SubmitRange, struct OMCJob *, job, a0, ULONG, count, d0, ULONG, slice, d1, ULONG *, failed, a1, , OPENMULTICORE_BASE_NAME)
+#define OMC_RunRange(job, count, slice, failed) \
+    LP4(0x72, LONG, OMC_RunRange, struct OMCJob *, job, a0, ULONG, count, d0, ULONG, slice, d1, ULONG *, failed, a1, , OPENMULTICORE_BASE_NAME)
 #endif

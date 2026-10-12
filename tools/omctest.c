@@ -7,7 +7,10 @@
  * hunks granted. With 0.2 it also checks OMC_JobInit's defaults,
  * OMC_AddGrant's refusals, OMC_AllocGrant memory in real jobs, OMC_Abort's
  * status, and a completion signal over more jobs at once than a task has
- * signal bits, on whatever cores there are and on the main CPU alone.
+ * signal bits, on whatever cores there are and on the main CPU alone. With
+ * 0.3 it also runs ranges (OMC_RunRange, OMC_SubmitRange): every slice
+ * right on the main CPU and on the board, a fault at one index, the
+ * refusals, and 64 work items as separate jobs against one range.
  * NOLIB (or no library) runs the port's fallback, plain calls, instead.
  *   OMCTest [COUNT n] [SIZE n] [NOLIB]
  * MIT, Copyright (c) 2026 Dalsin Limited. */
@@ -60,6 +63,27 @@ __attribute__((noinline)) LONG spin_job(ULONG n)
 {
     volatile ULONG k = 0;
     for (ULONG i = 0; i < n; i++) k += i;
+    return (LONG)k;
+}
+
+/* Range workers: worker(index, args...), D0 = index too. Each writes only
+ * its own slice of out. */
+__attribute__((noinline)) LONG sq_index(ULONG index, ULONG add, ULONG *out)
+{
+    out[index] = index * index + add;
+    return (LONG)index;
+}
+__attribute__((noinline)) LONG bad_at(ULONG index, ULONG at, ULONG *out)
+{
+    if (index == at) __asm volatile ("illegal");
+    out[index] = index * index + at;
+    return (LONG)index;
+}
+__attribute__((noinline)) LONG work_index(ULONG index, ULONG n, ULONG *out)
+{
+    ULONG k = index;
+    for (ULONG i = 0; i < n; i++) k = k * 1103515245UL + 12345UL;
+    out[index] = k;
     return (LONG)k;
 }
 
@@ -284,6 +308,148 @@ static ULONG test_v02(ULONG units, ULONG size, ULONG want, LONG want_d0)
     return bad;
 }
 
+static LONG ms_since(const struct DateStamp *d0)
+{
+    struct DateStamp d1;
+    DateStamp(&d1);
+    return ((d1.ds_Days - d0->ds_Days) * 24 * 60 * 60 * 50 + (d1.ds_Minute - d0->ds_Minute) * 60 * 50 + (d1.ds_Tick - d0->ds_Tick)) * 20;
+}
+
+/* A range of sq_index (or bad_at) over n indices into out: the job. */
+static LONG range_job(struct OMCJob *j, ULONG *a2, APTR fn, ULONG arg, ULONG *out, ULONG n, ULONG target, ULONG flags)
+{
+    OMC_JobInit(j);
+    j->omj_Entry = fn;
+    a2[0] = arg; a2[1] = (ULONG)out;
+    j->omj_Args = a2; j->omj_NArgs = 2;
+    j->omj_Target = target; j->omj_Flags = flags;
+    j->omj_StackSize = 4096;
+    return OMC_AddGrant(j, out, OMC_GRANTSIZE(n * 4), OMCG_READ | OMCG_WRITE);
+}
+
+/* 0.3's calls. The number of failures. */
+static ULONG test_v03(ULONG units)
+{
+    struct OMCJob job;
+    ULONG bad = 0, a2[2], n = 1000, failed, *out = OMC_AllocGrant(4096 * 4, OMCAF_CLEAR | OMCAF_PAGE);
+    ULONG targets[3] = { OMC_CPU0, OMC_ANY, OMC_ANY }, ranged = 0;   /* ranged: the board has RANGE (an any-core range reached it) */
+    if (!out) { PutStr((STRPTR)"  FAIL AllocGrant\n"); return 1; }
+
+    /* every index's slice, on CPU0, any core, the board only */
+    for (ULONG t = 0; t < (units ? 3UL : 2UL); t++) {
+        ULONG right = 0;
+        for (ULONG i = 0; i < n; i++) out[i] = 0xEEEEEEEEUL;
+        out[n] = 0x5A5A5A5AUL;
+        bad += check("range job", range_job(&job, a2, (APTR)sq_index, 1000, out, n, targets[t], t == 2 ? OMCF_BOARD : 0), OMCERR_OK);
+        failed = 0xDEAD;
+        OMC_RunRange(&job, n, 4, &failed);
+        for (ULONG i = 0; i < n; i++) right += out[i] == i * i + 1000;
+        Printf((STRPTR)"range of %ld, %s: status %ld on %s, %ld slices right, failed %ld, D0 %ld\n", n,
+               (LONG)(t == 0 ? "CPU0" : t == 1 ? "any" : "board only"), job.omj_Status, (LONG)where(job.omj_Where), right, failed, (LONG)job.omj_Regs[0]);
+        if (t == 1) {
+            ranged = job.omj_Where == OMCW_BOARD;
+            if (units && !ranged) PutStr((STRPTR)"  the board has no RANGE (a runtime before 12 October 2026): ranges run on the main CPU\n");
+        }
+        if (t == 2 && !ranged) {                           /* board only, and no board with RANGE: refused */
+            bad += check("board-only range without RANGE", job.omj_Status, OMCERR_NOCORE);
+            continue;
+        }
+        if (job.omj_Status || right != n || failed != n || out[n] != 0x5A5A5A5AUL || job.omj_Regs[0] != n - 1) bad++;
+    }
+
+    /* a fault at index 7: the status, the index, the slices below it written and its own not */
+    if (ranged) {
+        ULONG right = 0;
+        for (ULONG i = 0; i < 100; i++) out[i] = 0xEEEEEEEEUL;
+        range_job(&job, a2, (APTR)bad_at, 7, out, 100, OMC_ANY, OMCF_BOARD);
+        failed = 0xDEAD;
+        OMC_RunRange(&job, 100, 4, &failed);
+        for (ULONG i = 0; i < 7; i++) right += out[i] == i * i + 7;
+        Printf((STRPTR)"range with a fault at 7: status %ld, failed %ld, vector %ld, %ld of 7 below written, its own %s\n",
+               job.omj_Status, failed, job.omj_FaultVector, right, (LONG)(out[7] == 0xEEEEEEEEUL ? "untouched" : "written"));
+        if (job.omj_Status != OMCERR_FAULT || failed != 7 || right != 7 || out[7] != 0xEEEEEEEEUL || job.omj_FaultVector != 4) bad++;
+    }
+
+    /* refusals, everywhere alike */
+    range_job(&job, a2, (APTR)sq_index, 0, out, n, OMC_ANY, 0);
+    bad += check("range past its grant", OMC_RunRange(&job, n + 4, 4, &failed), OMCERR_BADJOB);
+    OMC_JobInit(&job); job.omj_Entry = (APTR)sq_index;
+    bad += check("range slice, nothing written", OMC_RunRange(&job, 10, 4, &failed), OMCERR_BADJOB);
+    range_job(&job, a2, (APTR)sq_index, 0, out, n, OMC_ANY, 0);
+    bad += check("range written, no slice", OMC_RunRange(&job, 10, 0, &failed), OMCERR_BADJOB);
+    range_job(&job, a2, (APTR)sq_index, 0, out, n, OMC_CORE(1, 1), 0);
+    bad += check("range on a named core", OMC_RunRange(&job, 10, 4, &failed), OMCERR_BADJOB);
+    range_job(&job, a2, (APTR)sq_index, 0, out, n, OMC_ANY, 0);
+    failed = 0xDEAD;
+    bad += check("range of none", OMC_RunRange(&job, 0, 4, &failed), OMCERR_OK);
+    bad += check("range of none: failed", failed, 0);
+
+    /* OMC_SubmitRange with a signal, collected with OMC_Wait */
+    {
+        BYTE sig = AllocSignal(-1);
+        if (sig >= 0) {
+            ULONG right = 0;
+            for (ULONG i = 0; i < n; i++) out[i] = 0;
+            range_job(&job, a2, (APTR)sq_index, 5, out, n, OMC_ANY, 0);
+            OMC_SetSignal(&job, NULL, 1UL << sig);
+            failed = 0xDEAD;
+            bad += check("SubmitRange", OMC_SubmitRange(&job, n, 4, &failed), OMCERR_OK);
+            while (!OMC_Check(&job)) Wait(1UL << sig);
+            bad += check("SubmitRange collected", OMC_Wait(&job), OMCERR_OK);
+            for (ULONG i = 0; i < n; i++) right += out[i] == i * i + 5;
+            Printf((STRPTR)"SubmitRange with a signal: %ld slices right, failed %ld, on %s\n", right, failed, (LONG)where(job.omj_Where));
+            if (right != n || failed != n) bad++;
+            FreeSignal(sig);
+        }
+    }
+
+    /* 64 work items: on CPU0 as plain calls, as 64 separate jobs (one signal bit for all), as one range */
+    {
+        static struct OMCJob many[64];
+        static ULONG margs[64][3];
+        ULONG items = 64, w = 200000, want[64], right = 0, left = items, wakes = 0;
+        UBYTE collected[64];
+        BYTE sig = AllocSignal(-1);
+        struct DateStamp d0;
+        LONG t0, tj, tr;
+        if (sig < 0) { PutStr((STRPTR)"  FAIL no signal bit\n"); OMC_FreeGrant(out); return bad + 1; }
+        DateStamp(&d0);
+        for (ULONG i = 0; i < items; i++) want[i] = (ULONG)work_index(i, w, out + 3072);
+        t0 = ms_since(&d0);
+        DateStamp(&d0);
+        SetSignal(0, 1UL << sig);
+        for (ULONG i = 0; i < items; i++) {                /* item i into its own 16-byte line, out[1024 + 4i] */
+            collected[i] = 0;
+            OMC_JobInit(&many[i]);
+            many[i].omj_Entry = (APTR)work_index;
+            margs[i][0] = i; margs[i][1] = w; margs[i][2] = (ULONG)(out + 1024 + 3 * i);   /* so out[index] is that line */
+            many[i].omj_Args = margs[i]; many[i].omj_NArgs = 3;
+            many[i].omj_StackSize = 4096;
+            OMC_AddGrant(&many[i], out + 1024 + 4 * i, 16, OMCG_READ | OMCG_WRITE);
+            OMC_SetSignal(&many[i], NULL, 1UL << sig);
+            if (OMC_Submit(&many[i]) != OMCERR_OK) bad++;
+        }
+        while (left && wakes < 100000) {
+            Wait(1UL << sig);
+            wakes++;
+            for (ULONG i = 0; i < items; i++)
+                if (!collected[i] && OMC_Check(&many[i])) { collected[i] = 1; left--; OMC_Wait(&many[i]); }
+        }
+        tj = ms_since(&d0);
+        for (ULONG i = 0; i < items; i++) right += out[1024 + 4 * i] == want[i];
+        DateStamp(&d0);
+        range_job(&job, a2, (APTR)work_index, w, out + 2048, items, OMC_ANY, 0);
+        OMC_RunRange(&job, items, 4, &failed);
+        tr = ms_since(&d0);
+        for (ULONG i = 0; i < items; i++) right += out[2048 + i] == want[i];
+        Printf((STRPTR)"64 work items: CPU0 %ld ms, 64 jobs %ld ms, one range %ld ms; %ld of 128 right\n", t0, tj, tr, right);
+        if (right != 128 || job.omj_Status) bad++;
+        FreeSignal(sig);
+    }
+    OMC_FreeGrant(out);
+    return bad;
+}
+
 /* No library: what a port does then, the same function as plain calls. */
 static int no_library(ULONG size)
 {
@@ -332,10 +498,10 @@ int main(void)
     Printf((STRPTR)"CPU0: status %ld on %s, D0 %08lx, sum %lu\n", job.omj_Status, (LONG)where(job.omj_Where), want_d0, want);
 
     {
-        ULONG targets[10], nt = 0;
+        ULONG targets[2 + 31], nt = 0;
         targets[nt++] = OMC_CPU0;
         targets[nt++] = OMC_ANY;
-        for (ULONG c = 1; c <= units && c <= 8; c++) targets[nt++] = OMC_CORE(1, c);
+        for (ULONG c = 1; c <= units && c <= 31; c++) targets[nt++] = OMC_CORE(1, c);
         for (ULONG t = 0; t < nt; t++) {
             struct DateStamp d0, d1;
             ULONG ok = 0;
@@ -360,10 +526,10 @@ int main(void)
 
     /* jobs at once: one on each core, submitted together */
     if (units) {
-        static struct OMCJob many[8];
-        static ULONG margs[8][3];
-        ULONG (*outs)[2] = AllocVec(8 * 8, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
-        ULONG n = units > 8 ? 8 : units, ok = 0;
+        static struct OMCJob many[16];
+        static ULONG margs[16][3];
+        ULONG (*outs)[4] = AllocVec(16 * 16, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);   /* a 16-byte line each: written grants are whole lines */
+        ULONG n = units > 16 ? 16 : units, ok = 0;
         for (ULONG c = 0; c < n; c++) {
             setup(&many[c], size, OMC_CORE(1, c + 1));
             margs[c][0] = (ULONG)data; margs[c][1] = size; margs[c][2] = (ULONG)outs[c];
@@ -397,6 +563,8 @@ int main(void)
     }
     if (OMC_HAS_JOBCALLS(OpenMulticoreBase)) bad += test_v02(units, size, want, want_d0);
     else PutStr((STRPTR)"0.1: the 0.2 calls are not there\n");
+    if (OMC_HAS_RANGE(OpenMulticoreBase)) bad += test_v03(units);
+    else PutStr((STRPTR)"0.2 or earlier: the 0.3 calls are not there\n");
 
     /* the board's counters after the work */
     for (ULONG n = 1; n <= units; n++)
