@@ -18,7 +18,9 @@
  * WHERE, the job, CLOSE); adds OMC_SubmitRange and OMC_RunRange (one
  * function over an index range, on every core at once through the board's
  * RANGE, or index by index on the main CPU); and takes named cores up to
- * 31.
+ * 31. 0.4 sends the board's version 2 run block where INFO says the board
+ * takes it: permissive unless OMCF_STRICT, and OMCF_PAGES (with
+ * OMCF_STRICT) for page grants; other boards get version 1, as before.
  *
  * Built bare by library/build.sh (no startup code, no C library).
  */
@@ -46,7 +48,7 @@
 
 #define REG(r, decl) register decl __asm(#r)   /* bebbo gcc: an argument in a register */
 #define LIB_VERSION 0
-#define LIB_REVISION 3
+#define LIB_REVISION 4
 
 #define DALSIN        0xDA15
 #define CORES_PRODUCT 7
@@ -59,6 +61,10 @@
 #define OP_INFO   3
 #define OP_RANGE  4                 /* CORES_BOARD.md section 1, 12 Oct 2026 */
 #define INFO_RANGE (1UL << 16)      /* INFO's aux: the board has RANGE */
+#define INFO_RUNBLOCK2 (1UL << 17)  /* INFO's aux: the board takes version 2 run blocks (12 Oct 2026) */
+#define OPT1_PERMISSIVE 2           /* version 1 options: strict unless this */
+#define OPT2_STRICT 1               /* version 2 options: permissive unless this */
+#define OPT2_PAGES  4               /* with OPT2_STRICT: execute grants of the list by whole 4 KB pages */
 #define RANGE_MAXSLOTS 32           /* stacks a RANGE request carries: the cores it can use at once */
 #define OP_CANCEL 0xFFFF
 
@@ -102,7 +108,7 @@ struct DosLibrary *DOSBase;
 int start(void) { return -1; }      /* run as a program: nothing (stays first in the file) */
 
 static const char lib_name[] = OPENMULTICORE_NAME;
-static const char lib_id[] = "openmulticore.library 0.3 (12.10.2026) OpenMulticore, Dalsin Limited\r\n";
+static const char lib_id[] = "openmulticore.library 0.4 (12.10.2026) OpenMulticore, Dalsin Limited\r\n";
 static const char service_name[] = "cpu.m68k/1";
 
 static struct Library *lib_init(REG(d0, struct OMCBase *base), REG(a0, BPTR seglist), REG(a6, struct ExecBase *sys));
@@ -401,33 +407,61 @@ static UBYTE *job_stack(struct OMCJob *job, ULONG *size)
     return s;
 }
 
+/* The run block's version and options (CORES_BOARD.md section 1). A board
+ * whose INFO has bit 17 takes version 2: permissive unless strict (bit 0),
+ * and page grants (bit 2) an option of strict. Any other board gets version
+ * 1, strict unless bit 1 (permissive), as 0.3 sent it; there OMCF_PAGES is
+ * plain strict. 1 when the job has page grants: its execute grants then go
+ * in the run block's list, the only grants a board widens to whole pages. */
+static int put_options(UBYTE *rb, const struct OMCJob *job, const struct OMCBase *base)
+{
+    int strict = (job->omj_Flags & OMCF_STRICT) != 0, pages = strict && (job->omj_Flags & OMCF_PAGES);
+    if (base->info & INFO_RUNBLOCK2) {
+        put32(rb + 0x00, 2);
+        put32(rb + 0x04, strict ? OPT2_STRICT | (pages ? OPT2_PAGES : 0) : 0);
+        return pages;
+    }
+    put32(rb + 0x00, 1);
+    put32(rb + 0x04, strict ? 0 : OPT1_PERMISSIVE);
+    return 0;
+}
+
+/* Where grant gr goes in pass (0 written, 1 execute with page grants, 2 the
+ * rest): 1 when it is this pass's. */
+static int grant_pass(const struct OMCGrant *gr, int pass, int pages)
+{
+    int kind = (gr->og_Mode & OMCG_WRITE) ? 0 : pages && (gr->og_Mode & OMCG_EXEC) ? 1 : 2;
+    return gr->og_Length && kind == pass;
+}
+
 /* Sends the job to the board (RUNX). 0, or an OMCERR_. */
-static LONG board_send(struct OMCJob *job, ULONG core)
+static LONG board_send(struct OMCJob *job, struct OMCBase *base, ULONG core)
 {
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     UBYTE *rb, *stack;
     ULONG ssize, flags = 3, extra = 0;   /* buf0 the run block and buf1 the stack, both written */
+    int pages;
     if (!(rb = grant_alloc(RUNBLOCK_SIZE, OMCAF_PAGE | OMCAF_CLEAR))) return OMCERR_NOMEM;
     job->omj_Private[P_BLOCK] = (ULONG)rb;
     if (!(stack = job_stack(job, &ssize))) return OMCERR_NOMEM;
-    put32(rb + 0x00, 1);
-    put32(rb + 0x04, job->omj_Flags & OMCF_STRICT ? 0 : 2);   /* the board is strict unless bit 1 (permissive) */
+    pages = put_options(rb, job, base);
     for (int i = 0; i < 15; i++) put32(rb + 0x08 + 4 * i, job->omj_Regs[i]);
     put32(rb + 0x44, job->omj_FPCR);
     put32(rb + 0x48, job->omj_TimeoutMS);
     zero(io->os_Buf, sizeof io->os_Buf);
     io->os_Buf[0].ob_Data = rb; io->os_Buf[0].ob_Length = RUNBLOCK_SIZE;
     io->os_Buf[1].ob_Data = stack; io->os_Buf[1].ob_Length = ssize;
-    /* written grants go in buf2 and buf3 (the board takes no others), then
-     * read grants fill what is left of those and the run block's list */
+    /* written grants go in buf2 and buf3 (the board takes no others); with
+     * page grants, execute grants then go in the run block's list while it
+     * has room; read grants fill what is left of buf2-buf3 and the list */
     {
         ULONG slot = 2, k = 0;
-        for (int pass = 0; pass < 2; pass++)
+        for (int pass = 0; pass < 3; pass++)
             for (ULONG g = 0; g < job->omj_NGrants && g < OMC_MAXGRANTS; g++) {
                 const struct OMCGrant *gr = &job->omj_Grants[g];
                 int w = (gr->og_Mode & OMCG_WRITE) != 0;
-                if (!gr->og_Length || w != (pass == 0)) continue;
-                if (slot < 4) {
+                if (!grant_pass(gr, pass, pages)) continue;
+                if (slot < 4 && (pass != 1 || k >= 16)) {
                     io->os_Buf[slot].ob_Data = gr->og_Addr; io->os_Buf[slot].ob_Length = gr->og_Length;
                     if (w) flags |= 1UL << slot;
                     slot++;
@@ -474,6 +508,7 @@ static LONG board_send_range(struct OMCJob *job, struct OMCBase *base, ULONG cou
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     UBYTE *rb, *stack;
     ULONG slot = job->omj_StackSize ? job->omj_StackSize : DEFAULT_STACK, nslot = range_cores(base), n, flags = 3, k = 0, next = slice ? 3 : 2;
+    int pages;
     slot = (slot + OMC_PAGESIZE - 1) & ~(ULONG)(OMC_PAGESIZE - 1);   /* whole pages each: a board keeps a core's slot mapped */
     if (!(rb = grant_alloc(RUNBLOCK_SIZE, OMCAF_PAGE | OMCAF_CLEAR))) return OMCERR_NOMEM;
     job->omj_Private[P_BLOCK] = (ULONG)rb;
@@ -482,21 +517,21 @@ static LONG board_send_range(struct OMCJob *job, struct OMCBase *base, ULONG cou
     job->omj_Private[P_STACK] = (ULONG)stack;
     for (ULONG i = 0; i < job->omj_NArgs; i++)
         ((ULONG *)(stack + n))[-(LONG)job->omj_NArgs + (LONG)i] = job->omj_Args[i];
-    put32(rb + 0x00, 1);
-    put32(rb + 0x04, job->omj_Flags & OMCF_STRICT ? 0 : 2);
+    pages = put_options(rb, job, base);
     for (int i = 0; i < 15; i++) put32(rb + 0x08 + 4 * i, job->omj_Regs[i]);
     put32(rb + 0x44, job->omj_FPCR);
     put32(rb + 0x48, job->omj_TimeoutMS);
     zero(io->os_Buf, sizeof io->os_Buf);
     io->os_Buf[0].ob_Data = rb; io->os_Buf[0].ob_Length = RUNBLOCK_SIZE;
     io->os_Buf[1].ob_Data = stack; io->os_Buf[1].ob_Length = n;
+    for (int pass = 0; pass < 3; pass++)                  /* as board_send: with page grants, execute grants in the list first */
     for (ULONG g = 0; g < job->omj_NGrants && g < OMC_MAXGRANTS; g++) {
         const struct OMCGrant *gr = &job->omj_Grants[g];
-        if (!gr->og_Length) continue;
+        if (!grant_pass(gr, pass, pages)) continue;
         if (gr->og_Mode & OMCG_WRITE) {                   /* the one written grant (start_range checked it) */
             io->os_Buf[2].ob_Data = gr->og_Addr; io->os_Buf[2].ob_Length = gr->og_Length;
             flags |= 4;
-        } else if (next < 4) {
+        } else if (next < 4 && (pass != 1 || k >= 16)) {
             io->os_Buf[next].ob_Data = gr->og_Addr; io->os_Buf[next].ob_Length = gr->og_Length;
             next++;
         } else if (k >= 16) {
@@ -756,7 +791,7 @@ static LONG start_job(struct OMCJob *job, struct OMCBase *base)
         return run_local(job);                          /* no board: the main CPU, the same function */
     }
     {
-        LONG r = board_send(job, core);
+        LONG r = board_send(job, base, core);
         if (r) { board_close(job); free_job_memory(job); job->omj_Private[P_STATE] = 2; return job->omj_Status = r; }
     }
     return 0;

@@ -16,7 +16,7 @@ openmulticore.library/OMC_Submit
 openmulticore.library/OMC_SubmitRange
 openmulticore.library/OMC_Wait
 
-openmulticore.library 0.3 (12.10.2026). MIT, Copyright (c) 2026 Dalsin
+openmulticore.library 0.4 (12.10.2026). MIT, Copyright (c) 2026 Dalsin
 Limited. The calls marked 0.2 are not in 0.1, whose version number is the
 same (0): test OMC_HAS_JOBCALLS(OpenMulticoreBase) before calling them.
 The calls marked 0.3 are not in 0.2: test OMC_HAS_RANGE(OpenMulticoreBase).
@@ -25,6 +25,17 @@ The calls marked 0.3 are not in 0.2: test OMC_HAS_RANGE(OpenMulticoreBase).
 the first job that needs it and closed when the last program closes the
 library, so a job on a board costs one request instead of four. Named
 cores go up to 31 (OMC_CORE(1, 1) to OMC_CORE(1, 31)); 0.2 took 8.
+
+What a job on a board may read (0.4). Without OMCF_STRICT, any Fast RAM
+and ROM: permissive, the default. With OMCF_STRICT, only its grants and
+its stack, byte exact: for secure applications, and the only kind a
+board on the LAN can run. OMCF_PAGES with OMCF_STRICT adds page grants:
+each grant with OMCG_EXEC may be read and run by its whole 4 KB pages, so
+a program's hunks (OMC_GrantSeg) run at full speed; the rest of those
+pages is never written, and writes stay exact. 0.4 sends the board's
+version 2 run block where the board's INFO says it takes one, else
+version 1, as 0.3 did; on such a board, and with 0.3, an OMCF_PAGES job
+is plain strict. On the main CPU nothing is enforced either way.
 
 A job (struct OMCJob, <libraries/openmulticore.h>) is one call of a 68k
 function: no OS calls, no Chip RAM, no chipset; only its arguments, its
@@ -214,7 +225,10 @@ openmulticore.library/OMC_GrantSeg             openmulticore.library/OMC_GrantSe
    FUNCTION
 	Adds a grant for every hunk, so a strict job (OMCF_STRICT) may run
 	the program's code and read its data. mode 0 means
-	OMCG_READ | OMCG_EXEC.
+	OMCG_READ | OMCG_EXEC. With OMCF_PAGES as well (0.4), the board reads
+	and runs each such hunk by its whole 4 KB pages: full speed, where
+	a hunk that doesn't fill its pages otherwise runs through the
+	board's byte-exact checks, about two hundred times slower.
 
    RESULT
 	added - the grants added (it stops at OMC_MAXGRANTS).

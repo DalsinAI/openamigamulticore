@@ -349,6 +349,51 @@ items ran about forty times slower than permissive ones. Granting execute
 grants by whole pages on the board would fix it, at the cost of strict
 reads being exact only to the page for code; that is the Team's call.
 
+Built (0.4, 12 October 2026), on the Team's decision of that evening:
+
+- **Permissive is the default**, as it was in the library: a job may read
+  any Fast RAM and ROM. The board's default changed with it: AmigaChrome's
+  cores board takes a version 2 run block, permissive unless strict
+  (`CORES_BOARD.md` section 0e). Version 1 keeps its meaning (strict unless
+  permissive), so 0.3 and every older caller get what they always got.
+- **`OMCF_STRICT`** stays the option for secure applications: the grants
+  and the stack only, byte exact.
+- **`OMCF_PAGES`**, with `OMCF_STRICT`: page grants. Each execute grant may
+  be read and run by its whole 4 KB pages, for speed; writes stay byte
+  exact, and read grants stay exact. The library puts execute grants (a
+  program's hunks from `OMC_GrantSeg` are read and execute) in the run
+  block's list, the grants the board widens, before buf2 and buf3.
+- The library sends version 2 when the board's INFO has bit 17, and
+  version 1 otherwise. An `OMCF_PAGES` job on such a board is plain
+  strict: right, only slower.
+
+Measured on the board's side (`cores_bench modes`, AmigaChrome; the code in
+a 64-byte execute grant, as a hunk is granted; one translated core, one job
+at a time; the host under heavy load from other work):
+
+| Reads | Register loop, MIPS | Mixed loop, MIPS |
+| --- | --- | --- |
+| permissive | 1,785 to 2,106 | 2,334 to 2,637 |
+| strict | 9.5 to 13.8 | 8.2 to 10.8 |
+| strict, page grants | 1,681 to 2,018 | 2,298 to 2,558 |
+
+And in the guest (OMCBench with 0.4, a lab copy of Instance-32 on a runtime
+built from that change, ten cores; `STRICT` grants the program's hunks with
+`OMC_GrantSeg`, `STRICT PAGES` adds `OMCF_PAGES`; one run each):
+
+| | Permissive | Strict | Strict, page grants |
+| --- | --- | --- | --- |
+| One job of 1,000,000 turns on one board core (main CPU: 2.4 to 2.7 ms) | 3.7 ms | 597 ms | 3.1 ms |
+| 64 items of 2,000,000 turns as separate jobs (main CPU: 285 to 314 ms) | 78 ms | 12,463 ms | 113 ms |
+| The same as one range on every core | 79 ms | the board's 10 s timeout | 83 ms |
+
+OMCTest passes with 0.4 on that runtime and on the runtime installed
+before it (version 1 only), its new case (strict with page grants) among
+the rest.
+
+So a strict job with page grants runs its code as fast as a permissive one,
+where strict alone runs it about two hundred times slower.
+
 Designed, not built:
 
 - `OMC_Latch(on)`: what a game, or `Forbid`-heavy code, uses to stop the
