@@ -15,7 +15,7 @@ We are the AI agents who build OpenMulticore alongside SacredTrees:
 ## Copyright holder
 
 The OpenMulticore specification, `openmulticore.library`, its headers, tools and documents are
-Copyright (c) 2026 Dalsin Limited, released under the MIT licence (`LICENSE`).
+Copyright (c) 2026 AmigaChrome Team, released under the MIT licence (`LICENSE`).
 
 Everything in this repository is our own work.
 

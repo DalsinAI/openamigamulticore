@@ -1,4 +1,4 @@
-<!-- OpenMulticore's design and specification, written in AmigaChrome's development tree on 4 October 2026. Copyright (c) 2026 Dalsin Limited, MIT licence (LICENSE). -->
+<!-- OpenMulticore's design and specification, written in AmigaChrome's development tree on 4 October 2026. Copyright (c) 2026 AmigaChrome Team, MIT licence (LICENSE). -->
 
 # OpenMulticore
 
@@ -10,7 +10,7 @@ We, 4 October 2026: "we should add OpenMulticore for the autoconfig spec
 and library"; the product is OpenMulticore and its repository
 `DalsinAI/openamigamulticore` (Our naming: products drop "Amiga", repos
 carry it). Like every project we call Open, it is MIT, Copyright (c) 2026
-Dalsin Limited, with the credit kept.
+AmigaChrome Team, with the credit kept.
 
 It builds on the ACMP note of 28 September 2026 (capsule *A1200 Shared Memory
 and ACMP*), which settled how a second CPU joins an A1200 without a second
@@ -35,8 +35,8 @@ option, but native execution is possible too".
   also run native code for its own instruction set: x86-64 on AmigaChrome's
   PC, ARM64 on the Pi appliance and on a PiStorm's spare cores.
 - **Cores sit on AutoConfig boards that carry the ACSV block**, the one
-  protocol AmigaChrome's services card uses (Dalsin $DA15, MAGIC `'ACSV'`),
-  with CLASS 2 for cores. Dalsin's cores board is product 7. Two registers
+  protocol AmigaChrome's services card uses (AmigaChrome Team $DA15, MAGIC `'ACSV'`),
+  with CLASS 2 for cores. AmigaChrome Team's cores board is product 7. Two registers
   follow CLASS: UNITS at `$24` (how many cores; every one runs 68k) and ISAS
   at `$28` (bit 0 m68k, always set; bit 1 x86-64; bit 2 ARM64). The board's
   directory lists `cpu.m68k/1`, plus `cpu.x86_64/1` or `cpu.arm64/1` when the
@@ -121,7 +121,7 @@ Drivers come in two kinds:
   icon carries `PRODUCT=manufacturer/product`, and `BindDrivers` starts the
   driver when that board is present and unclaimed, the standard Amiga way.
   The driver claims the board (clears `CDF_CONFIGME`) and registers its
-  cores. OpenMulticore's own reference board is Dalsin $DA15, product 7 (the
+  cores. OpenMulticore's own reference board is AmigaChrome Team $DA15, product 7 (the
   number ACMP reserved), IO, 64 KB, with the driver `OpenMulticore`
   (`PRODUCT=55829/7`). Another maker's board ships its own driver under its own
   manufacturer and product; the library never reads a board's registers
@@ -162,7 +162,7 @@ Risks on a stock OS 3.2.3:
 
 ## 3. The autoconfig board
 
-**Superseded on 5 October 2026 by the ACSV board (section 0).** Dalsin's
+**Superseded on 5 October 2026 by the ACSV board (section 0).** AmigaChrome Team's
 cores board and any other maker's now present the ACSV block with CLASS 2,
 UNITS and ISAS, and their services in its directory (`CORES_BOARD.md` in
 AmigaChrome has the registers, rings and records). The register map below
