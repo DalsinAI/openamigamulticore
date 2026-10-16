@@ -50,7 +50,7 @@
 #define LIB_VERSION 0
 #define LIB_REVISION 4
 
-#define DALSIN        0xDA15
+#define AMIGACHROME_MFR        0xDA15
 #define CORES_PRODUCT 7
 #define REG_UNITS     0x24
 #define REG_ISAS      0x28
@@ -202,7 +202,7 @@ static volatile UBYTE *cores_board(void)
     struct ConfigDev *cd;
     volatile UBYTE *b = NULL;
     if (!ExpansionBase) return NULL;
-    if ((cd = FindConfigDev(NULL, DALSIN, CORES_PRODUCT)) && cd->cd_BoardAddr && *(volatile ULONG *)cd->cd_BoardAddr == OPENSERVICE_MAGIC)
+    if ((cd = FindConfigDev(NULL, AMIGACHROME_MFR, CORES_PRODUCT)) && cd->cd_BoardAddr && *(volatile ULONG *)cd->cd_BoardAddr == OPENSERVICE_MAGIC)
         b = cd->cd_BoardAddr;
     CloseLibrary(ExpansionBase);
     return b;
