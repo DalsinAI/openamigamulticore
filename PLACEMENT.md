@@ -1,4 +1,4 @@
-<!-- OpenMulticore placement framework, written 4 October 2026. Copyright (c) 2026 Dalsin Limited, MIT licence (LICENSE). -->
+<!-- OpenMulticore placement framework, written 4 October 2026. Copyright (c) 2026 AmigaChrome Team, MIT licence (LICENSE). -->
 
 # Placing applications on cores
 

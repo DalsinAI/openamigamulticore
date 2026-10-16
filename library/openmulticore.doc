@@ -16,8 +16,8 @@ openmulticore.library/OMC_Submit
 openmulticore.library/OMC_SubmitRange
 openmulticore.library/OMC_Wait
 
-openmulticore.library 0.4 (12.10.2026). MIT, Copyright (c) 2026 Dalsin
-Limited. The calls marked 0.2 are not in 0.1, whose version number is the
+openmulticore.library 0.4 (12.10.2026). MIT, Copyright (c) 2026 AmigaChrome
+Team. The calls marked 0.2 are not in 0.1, whose version number is the
 same (0): test OMC_HAS_JOBCALLS(OpenMulticoreBase) before calling them.
 The calls marked 0.3 are not in 0.2: test OMC_HAS_RANGE(OpenMulticoreBase).
 

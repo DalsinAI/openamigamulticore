@@ -1,8 +1,8 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenMulticore, MIT licence (LICENSE).
+/* Copyright (c) 2026 AmigaChrome Team. OpenMulticore, MIT licence (LICENSE).
  * SPDX-License-Identifier: MIT
  *
  * openmulticore.library 0.2 (DESIGN.md sections 0 and 4). It runs a 68k
- * function on a core of a cores board (AmigaChrome's, a Dalsin $DA15
+ * function on a core of a cores board (AmigaChrome's, an AmigaChrome Team $DA15
  * board carrying the ACSV block, CLASS 2, product 7) through
  * openservice.device's cpu.m68k/1 service, or on the main CPU when there is
  * no board, the same function either way. A caller may name the core
@@ -108,7 +108,7 @@ struct DosLibrary *DOSBase;
 int start(void) { return -1; }      /* run as a program: nothing (stays first in the file) */
 
 static const char lib_name[] = OPENMULTICORE_NAME;
-static const char lib_id[] = "openmulticore.library 0.4 (12.10.2026) OpenMulticore, Dalsin Limited\r\n";
+static const char lib_id[] = "openmulticore.library 0.4 (12.10.2026) OpenMulticore, AmigaChrome Team\r\n";
 static const char service_name[] = "cpu.m68k/1";
 
 static struct Library *lib_init(REG(d0, struct OMCBase *base), REG(a0, BPTR seglist), REG(a6, struct ExecBase *sys));

@@ -1,6 +1,6 @@
 Short:        Run jobs on extra CPU cores, open spec
 Uploader:     (We fill this in at upload time)
-Author:       Dalsin Limited
+Author:       AmigaChrome Team
 Type:         util/libs
 Version:      0.1
 Architecture: m68k-amigaos >= 3.2.0
@@ -28,9 +28,9 @@ Status: this archive is the specification. The library and AmigaChrome's board
 follow; AmigaChrome (an Amiga on x86 and ARM64 cores) implements it first,
 with 68k cores that run on them.
 
-Free software under the MIT licence, Copyright (c) 2026 Dalsin Limited. Use
+Free software under the MIT licence, Copyright (c) 2026 AmigaChrome Team. Use
 it, change it, fork it and ship it; keep the copyright notice and the licence
 with every copy. If you build on it, please say it is based on OpenMulticore
-by Dalsin Limited.
+by the AmigaChrome Team.
 
 Source: https://github.com/DalsinAI/openamigamulticore

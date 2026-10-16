@@ -1,5 +1,5 @@
 * "openmulticore.library" 0.3 (12.10.2026), from openmulticore_lib.sfd
-* MIT, Copyright (c) 2026 Dalsin Limited.
+* MIT, Copyright (c) 2026 AmigaChrome Team.
 ##base _OpenMulticoreBase
 ##bias 30
 ##public

@@ -104,16 +104,16 @@ has the numbers, and AmigaChrome's `CORES_BOARD.md` section 0e the board's side.
 ## Licence and credit
 
 OpenMulticore is free software under the MIT licence (`LICENSE`,
-Copyright (c) 2026 Dalsin Limited): anyone may use it, change it, fork it and
+Copyright (c) 2026 AmigaChrome Team): anyone may use it, change it, fork it and
 ship it, commercially too, and hardware makers may implement the
 specification freely. The licence's one condition keeps the credit: the
 copyright notice and the licence text stay with every copy and fork. We also
 ask, as a courtesy rather than a condition, that a fork, a port or an
-implementation say it is based on OpenMulticore by Dalsin Limited.
+implementation say it is based on OpenMulticore by the AmigaChrome Team.
 
-OpenMulticore was created by Dalsin Limited, for
+OpenMulticore was created by the AmigaChrome Team, for
 AmigaChrome.
 
 ## Contributors
 
-OpenMulticore is created and maintained by [SacredTrees](https://github.com/SacredTrees) with the AmigaChrome agent team, copyright Dalsin Limited. Everyone whose work it includes is credited in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
+OpenMulticore is created and maintained by [SacredTrees](https://github.com/SacredTrees) with the AmigaChrome agent team, copyright AmigaChrome Team. Everyone whose work it includes is credited in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).

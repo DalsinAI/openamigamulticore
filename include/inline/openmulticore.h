@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenMulticore, MIT licence (LICENSE).
+/* Copyright (c) 2026 AmigaChrome Team. OpenMulticore, MIT licence (LICENSE).
  * SPDX-License-Identifier: MIT
  * Inline calls for bebbo's m68k-amigaos-gcc, from library/openmulticore_lib.sfd. */
 #ifndef _INLINE_OPENMULTICORE_H

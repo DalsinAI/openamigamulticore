@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenMulticore, MIT licence (LICENSE). */
+/* Copyright (c) 2026 AmigaChrome Team. OpenMulticore, MIT licence (LICENSE). */
 #ifndef _PROTO_OPENMULTICORE_H
 #define _PROTO_OPENMULTICORE_H
 #include <exec/types.h>

@@ -1,4 +1,4 @@
-/* Copyright (c) 2026 Dalsin Limited. OpenMulticore, MIT licence (LICENSE).
+/* Copyright (c) 2026 AmigaChrome Team. OpenMulticore, MIT licence (LICENSE).
  * OMCTest: openmulticore.library end to end. Lists the cores, then runs one
  * pure 68k function (it sums an array into a written buffer and returns
  * the total) on the main CPU, on any core, and on each named core, checking
@@ -13,7 +13,7 @@
  * refusals, and 64 work items as separate jobs against one range.
  * NOLIB (or no library) runs the port's fallback, plain calls, instead.
  *   OMCTest [COUNT n] [SIZE n] [NOLIB]
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <dos/dos.h>

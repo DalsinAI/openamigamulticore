@@ -3,7 +3,7 @@
  * OMC_JobInit, OMC_AddGrant, OMC_AllocGrant, OMC_FreeGrant and
  * OMC_SetSignal; 0.3 adds OMC_SubmitRange and OMC_RunRange; 0.4 adds
  * OMCF_PAGES (library/openmulticore.doc).
- * MIT, Copyright (c) 2026 Dalsin Limited. */
+ * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef LIBRARIES_OPENMULTICORE_H
 #define LIBRARIES_OPENMULTICORE_H
 
