@@ -62,7 +62,7 @@ before it uses them:
 described in `library/openmulticore.doc`; `library/openmulticore_lib.fd` is
 there for other compilers. `tools/omctest.c` tests each of them.
 
-Build: `library/build.sh` with the os32 stove and a checkout of
+Build (for the 68040, `-m68040`): `library/build.sh` with the os32 stove and a checkout of
 `openamigaservice` beside this one. Tested on a scratch OS 3.2.3 copy with
 AmigaChrome's cores board (`a1200native -C`): the main CPU, any core, a fault
 returned as a status, and a strict job all pass. Jobs aimed at a named core

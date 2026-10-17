@@ -618,9 +618,7 @@ __asm__(
 "   move.l  -4(a0),a2\n"              /* the job */
 "   tst.l   344(a2)\n"             /* omj_Private[P_FPU]: an FPU to set FPCR on */
 "   beq.s   1f\n"
-"   .chip   68040\n"
 "   fmove.l 64(a2),fpcr\n"            /* omj_FPCR */
-"   .chip   68020\n"
 "1: pea     2f(pc)\n"                 /* where the job returns to */
 "   move.l  (a2),-(sp)\n"             /* the entry: reached by RTS */
 "   movem.l 4(a2),d0-d7/a0-a6\n"      /* omj_Regs */
@@ -638,9 +636,7 @@ __asm__(
 "   dbra    d1,3b\n"
 "   tst.l   344(a2)\n"
 "   beq.s   4f\n"
-"   .chip   68040\n"
 "   fmove.l fpsr,64(a2)\n"
-"   .chip   68020\n"
 "4: lea     332(a2),a0\n"          /* omj_Private[P_SWAP]: the StackSwapStruct */
 "   jsr     -732(a6)\n"               /* back on the caller's stack */
 "   movem.l (sp)+,d2-d7/a2-a6\n"
