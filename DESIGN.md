@@ -394,6 +394,20 @@ the rest.
 So a strict job with page grants runs its code as fast as a permissive one,
 where strict alone runs it about two hundred times slower.
 
+Built (0.5, 21 October 2026): a cheap hand-over. The round trip of a lone
+job (about 0.15 ms) kept small jobs on the main CPU, so the board's side
+was made faster (AmigaChrome's `CORES_BOARD.md` section 0f): the doorbell
+puts a job straight on the cores' queue, an idle core waits a short moment
+awake before it sleeps, and a finished job is published at the emulation's
+next check instead of the end of the raster line, at once when the board
+is read while one waits. INFO's bit 18 says a board does this. With it,
+the library polls the board for up to 150 microseconds
+(`ENV:OpenMulticore/PollMicros`) before a wait sleeps; without it,
+nothing changes. On the board's own side a lone empty job went from 62 to
+66 microseconds to 10 to 12 (`cores_bench lone`, one and two cores, a
+4-CPU host); the guest's figure (OMCBench's empty job, 164 microseconds
+before) is still to be measured on an instance.
+
 Designed, not built:
 
 - `OMC_Latch(on)`: what a game, or `Forbid`-heavy code, uses to stop the

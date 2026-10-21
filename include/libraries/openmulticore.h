@@ -1,8 +1,9 @@
-/* openmulticore.library 0.4: run 68k functions on extra cores, or on the
+/* openmulticore.library 0.5: run 68k functions on extra cores, or on the
  * main CPU when there are none (DESIGN.md sections 0 and 4). 0.2 adds
  * OMC_JobInit, OMC_AddGrant, OMC_AllocGrant, OMC_FreeGrant and
  * OMC_SetSignal; 0.3 adds OMC_SubmitRange and OMC_RunRange; 0.4 adds
- * OMCF_PAGES (library/openmulticore.doc).
+ * OMCF_PAGES; 0.5 polls a fast board briefly before a wait sleeps, with no
+ * new calls (library/openmulticore.doc).
  * MIT, Copyright (c) 2026 AmigaChrome Team. */
 #ifndef LIBRARIES_OPENMULTICORE_H
 #define LIBRARIES_OPENMULTICORE_H
@@ -16,6 +17,7 @@
 #define OPENMULTICORE_REVISION_JOBCALLS 2   /* 0.2: the five calls below */
 #define OPENMULTICORE_REVISION_RANGE    3   /* 0.3: OMC_SubmitRange, OMC_RunRange */
 #define OPENMULTICORE_REVISION_PAGES    4   /* 0.4: OMCF_PAGES (earlier ones run such a job plain strict) */
+#define OPENMULTICORE_REVISION_POLL     5   /* 0.5: a wait polls a board with the fast path before it sleeps */
 
 /* The library opened is 0.2 or later: OMC_JobInit, OMC_AddGrant,
  * OMC_AllocGrant, OMC_FreeGrant and OMC_SetSignal are there. The version
