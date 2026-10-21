@@ -16,7 +16,7 @@ openmulticore.library/OMC_Submit
 openmulticore.library/OMC_SubmitRange
 openmulticore.library/OMC_Wait
 
-openmulticore.library 0.4 (12.10.2026). MIT, Copyright (c) 2026 AmigaChrome
+openmulticore.library 0.5 (21.10.2026). MIT, Copyright (c) 2026 AmigaChrome
 Team. The calls marked 0.2 are not in 0.1, whose version number is the
 same (0): test OMC_HAS_JOBCALLS(OpenMulticoreBase) before calling them.
 The calls marked 0.3 are not in 0.2: test OMC_HAS_RANGE(OpenMulticoreBase).
@@ -36,6 +36,14 @@ pages is never written, and writes stay exact. 0.4 sends the board's
 version 2 run block where the board's INFO says it takes one, else
 version 1, as 0.3 did; on such a board, and with 0.3, an OMCF_PAGES job
 is plain strict. On the main CPU nothing is enforced either way.
+
+Waiting (0.5). A board whose INFO says it has the fast path (AmigaChrome's
+cores board from 21 October 2026, INFO bit 18) publishes a finished job as
+soon as it is read. OMC_Wait(), OMC_Run68k() and OMC_RunRange() then poll
+such a board for up to 150 microseconds (ENV:OpenMulticore/PollMicros, as
+the connection is made; 0 turns it off) before they sleep, so a short job
+is collected with no task switch. Any other board, a Cradle on the LAN and
+the main CPU are as in 0.4. No call changes.
 
 A job (struct OMCJob, <libraries/openmulticore.h>) is one call of a 68k
 function: no OS calls, no Chip RAM, no chipset; only its arguments, its
@@ -479,6 +487,11 @@ openmulticore.library/OMC_Wait                     openmulticore.library/OMC_Wai
 	job (omj_Regs, omj_FPCR, omj_Status, the fault) and frees what the
 	library allocated for it. On a job that ran on the main CPU, or was
 	refused, it returns its status at once.
+
+	On a board with the fast path (0.5) it polls the board for the job
+	for a short time (150 microseconds unless ENV:OpenMulticore/PollMicros
+	says otherwise) before it sleeps: a short job is collected without a
+	task switch. Other boards: it sleeps at once, as before.
 
    RESULT
 	status - omj_Status: OMCERR_OK, OMCERR_FAULT (omj_FaultVector,

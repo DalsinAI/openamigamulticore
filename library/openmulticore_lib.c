@@ -21,6 +21,11 @@
  * 31. 0.4 sends the board's version 2 run block where INFO says the board
  * takes it: permissive unless OMCF_STRICT, and OMCF_PAGES (with
  * OMCF_STRICT) for page grants; other boards get version 1, as before.
+ * 0.5 polls briefly for a job its caller waits on (OMC_Run68k, OMC_Wait,
+ * OMC_RunRange) before it sleeps, where INFO says the board has the fast
+ * path (bit 18): such a board publishes a completion as soon as it is read
+ * while one waits, so a short job is collected without a task switch.
+ * Every other board, the LAN and the main CPU are as in 0.4.
  *
  * Built bare by library/build.sh (no startup code, no C library).
  */
@@ -38,9 +43,11 @@
 #include <dos/dosextens.h>
 #include <dos/var.h>
 #include <libraries/configvars.h>
+#include <devices/timer.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include <proto/expansion.h>
+#include <proto/timer.h>
 
 #include "../include/libraries/openmulticore.h"
 #include <devices/openservice.h>   /* openamigaservice's include/ */
@@ -48,12 +55,13 @@
 
 #define REG(r, decl) register decl __asm(#r)   /* bebbo gcc: an argument in a register */
 #define LIB_VERSION 0
-#define LIB_REVISION 4
+#define LIB_REVISION 5
 
 #define AMIGACHROME_MFR        0xDA15
 #define CORES_PRODUCT 7
 #define REG_UNITS     0x24
 #define REG_ISAS      0x28
+#define REG_INTREQ    0x18          /* ACSV's INTREQ: read while polling (0.5) */
 #define REG_QUEUED    0x2C          /* AC090's proposal, 5 Oct 2026 */
 #define REG_CORE(n)   (0x100 + 16 * ((n) - 1))   /* state, load, jobs done, host CPU */
 
@@ -62,6 +70,8 @@
 #define OP_RANGE  4                 /* CORES_BOARD.md section 1, 12 Oct 2026 */
 #define INFO_RANGE (1UL << 16)      /* INFO's aux: the board has RANGE */
 #define INFO_RUNBLOCK2 (1UL << 17)  /* INFO's aux: the board takes version 2 run blocks (12 Oct 2026) */
+#define INFO_FAST (1UL << 18)       /* INFO's aux: the board's fast path: a read of it publishes a waiting completion (21 Oct 2026) */
+#define POLL_MICROS 150             /* 0.5: how long a waiting caller polls a fast board (ENV:OpenMulticore/PollMicros) */
 #define OPT1_PERMISSIVE 2           /* version 1 options: strict unless this */
 #define OPT2_STRICT 1               /* version 2 options: permissive unless this */
 #define OPT2_PAGES  4               /* with OPT2_STRICT: execute grants of the list by whole 4 KB pages */
@@ -100,15 +110,20 @@ struct OMCBase {
     ULONG where;                    /* OMCW_BOARD or OMCW_LAN */
     ULONG units, info;              /* INFO's result and aux (0 when it did not answer) */
     ULONG range_max;                /* ENV:OpenMulticore/RangeCores when the connection was made (0: not set) */
+    /* 0.5: the fast path, when INFO has it and the board is this machine's */
+    volatile UBYTE *fast;           /* the board's registers, or NULL: no polling, as 0.4 */
+    ULONG poll_ticks;               /* how long to poll, in E-clock ticks */
+    struct timerequest *timer;      /* timer.device, opened for ReadEClock */
 };
 
 struct ExecBase *SysBase;
 struct DosLibrary *DOSBase;
+struct Device *TimerBase;           /* ReadEClock's (0.5): set while the connection has the fast path */
 
 int start(void) { return -1; }      /* run as a program: nothing (stays first in the file) */
 
 static const char lib_name[] = OPENMULTICORE_NAME;
-static const char lib_id[] = "openmulticore.library 0.4 (12.10.2026) OpenMulticore, AmigaChrome Team\r\n";
+static const char lib_id[] = "openmulticore.library 0.5 (21.10.2026) OpenMulticore, AmigaChrome Team\r\n";
 static const char service_name[] = "cpu.m68k/1";
 
 static struct Library *lib_init(REG(d0, struct OMCBase *base), REG(a0, BPTR seglist), REG(a6, struct ExecBase *sys));
@@ -208,6 +223,69 @@ static volatile UBYTE *cores_board(void)
     return b;
 }
 
+/* ---- the fast path (0.5) -------------------------------------------------------- */
+
+/* With the connection, under its semaphore: where INFO says the board has
+ * the fast path and it is this machine's board (not a Cradle on the LAN),
+ * its registers and timer.device for the poll's clock. Anything missing
+ * leaves base->fast NULL: no polling, exactly as 0.4. */
+static void fast_open(struct OMCBase *base)
+{
+    struct timerequest *tr;
+    struct EClockVal ev;
+    ULONG micros = POLL_MICROS, freq;
+    volatile UBYTE *b;
+    base->fast = NULL;
+    if (!(base->info & INFO_FAST) || base->where != OMCW_BOARD) return;
+    {
+        char buf[16];
+        if (base->dos && GetVar((STRPTR)"OpenMulticore/PollMicros", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY) > 0) {
+            micros = 0;
+            for (char *p = buf; *p >= '0' && *p <= '9'; p++) micros = micros * 10 + (ULONG)(*p - '0');
+        }
+    }
+    if (!micros || micros > 10000) return;               /* 0: no polling (for measuring); more than 10 ms is no longer brief */
+    if (!(b = cores_board())) return;
+    if (!(tr = AllocMem(sizeof *tr, MEMF_PUBLIC | MEMF_CLEAR))) return;
+    if (OpenDevice((STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)tr, 0)) { FreeMem(tr, sizeof *tr); return; }
+    base->timer = tr;
+    TimerBase = tr->tr_node.io_Device;
+    freq = ReadEClock(&ev);
+    base->poll_ticks = freq / 1000 * micros / 1000 + 1;
+    base->fast = b;
+}
+static void fast_close(struct OMCBase *base)
+{
+    base->fast = NULL;
+    if (!base->timer) return;
+    TimerBase = NULL;
+    CloseDevice((struct IORequest *)base->timer);
+    FreeMem(base->timer, sizeof *base->timer);
+    base->timer = NULL;
+}
+
+/* Before a waiting caller sleeps on its job: on a fast board, up to
+ * poll_ticks of polling. Each turn reads the board's INTREQ (a read while
+ * a completion waits makes the board publish it at once; its INT2 then
+ * replies the request, as for any completion) and looks whether the
+ * request is back. A short job is then collected with no task switch. */
+static void board_poll(struct OMCBase *base, struct IORequest *io)
+{
+    volatile ULONG *intreq;
+    struct EClockVal t0, t;
+    ULONG n = 0;
+    if (!base->fast || !TimerBase || CheckIO(io)) return;
+    intreq = (volatile ULONG *)(base->fast + REG_INTREQ);
+    ReadEClock(&t0);
+    for (;;) {
+        (void)*intreq;
+        if (CheckIO(io)) return;
+        if (++n & 15) continue;                          /* the clock every 16 turns */
+        ReadEClock(&t);
+        if (t.ev_hi - t0.ev_hi > 1 || t.ev_lo - t0.ev_lo >= base->poll_ticks) return;
+    }
+}
+
 /* ---- the kept connection (0.3) ------------------------------------------------- */
 
 /* openservice.device opened and cpu.m68k/1 found once, by the first job that
@@ -249,6 +327,7 @@ static LONG conn_get(struct OMCBase *base)
                     if (base->dos && GetVar((STRPTR)"OpenMulticore/RangeCores", (STRPTR)buf, sizeof buf, GVF_GLOBAL_ONLY) > 0)
                         for (char *p = buf; *p >= '0' && *p <= '9'; p++) base->range_max = base->range_max * 10 + (ULONG)(*p - '0');
                 }
+                fast_open(base);
                 io->os_Req.io_Message.mn_ReplyPort = NULL;    /* a template only: jobs copy it, with ports of their own */
                 base->conn = io;
                 base->conn_state = 1;
@@ -275,6 +354,7 @@ static void conn_close(struct OMCBase *base)
     base->conn = NULL;
     base->conn_state = 0;
     base->units = base->info = 0;
+    fast_close(base);
     ReleaseSemaphore(&base->sem);
     if (!io) return;
     if ((port = CreateMsgPort())) {
@@ -554,8 +634,9 @@ static LONG board_send_range(struct OMCJob *job, struct OMCBase *base, ULONG cou
     return 0;
 }
 
-/* The board's answer into the job. */
-static LONG board_finish(struct OMCJob *job)
+/* The board's answer into the job. 0.5: a fast board is polled briefly
+ * first (board_poll). */
+static LONG board_finish(struct OMCJob *job, struct OMCBase *base)
 {
     struct OSRequest *io = (struct OSRequest *)job->omj_Private[P_IO];
     const UBYTE *rb = (const UBYTE *)job->omj_Private[P_BLOCK];
@@ -564,10 +645,14 @@ static LONG board_finish(struct OMCJob *job)
         struct MsgPort *sp = (struct MsgPort *)job->omj_Private[P_PORT];
         if (!CheckIO((struct IORequest *)io)) {
             if (FindTask(NULL) != sp->mp_SigTask) return OMCERR_BADJOB;   /* only the signalled task can wait on it; the job stays */
+            board_poll(base, (struct IORequest *)io);
             WaitIO((struct IORequest *)io);
             signal_again(job);
         } else WaitIO((struct IORequest *)io);                            /* done: takes the reply off the port */
-    } else WaitIO((struct IORequest *)io);
+    } else {
+        board_poll(base, (struct IORequest *)io);
+        WaitIO((struct IORequest *)io);
+    }
     status = io->os_Req.io_Error == IOERR_ABORTED ? OMCERR_CANCEL       /* OMC_Abort */
            : io->os_Req.io_Error ? OMCERR_LOST : io->os_Status;
     if (status == -1 || status == -9) status = OMCERR_NOCORE;   /* no such service; a core past UNITS */
@@ -870,7 +955,7 @@ static LONG OMC_Run68k(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base
     if (job->omj_Private[P_SIGMASK] && (struct Task *)job->omj_Private[P_SIGTASK] != FindTask(NULL))
         return OMCERR_BADJOB;                            /* it would wait on another task's signal */
     if ((r = start_job(job, base)) || job->omj_Private[P_STATE] == 2) return job->omj_Status;
-    return board_finish(job);
+    return board_finish(job, base);
 }
 
 static LONG OMC_Submit(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base))
@@ -885,7 +970,7 @@ static LONG OMC_Submit(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base
 
 static LONG OMC_Wait(REG(a0, struct OMCJob *job), REG(a6, struct OMCBase *base))
 {
-    if (job && job->omj_Private[P_STATE] == 1) return board_finish(job);
+    if (job && job->omj_Private[P_STATE] == 1) return board_finish(job, base);
     return job ? job->omj_Status : OMCERR_BADJOB;
 }
 
@@ -1026,5 +1111,5 @@ static LONG OMC_RunRange(REG(a0, struct OMCJob *job), REG(d0, ULONG count), REG(
     if (job->omj_Private[P_SIGMASK] && (struct Task *)job->omj_Private[P_SIGTASK] != FindTask(NULL))
         return OMCERR_BADJOB;
     if ((r = start_range(job, base, count, slice, failed)) || job->omj_Private[P_STATE] == 2) return job->omj_Status;
-    return board_finish(job);
+    return board_finish(job, base);
 }

@@ -101,6 +101,20 @@ sends version 1, as 0.3 did, and an `OMCF_PAGES` job is plain strict.
 0.3 programs and older boards keep working unchanged. `DESIGN.md` section 4
 has the numbers, and AmigaChrome's `CORES_BOARD.md` section 0e the board's side.
 
+## openmulticore.library 0.5
+
+0.5 (21 October 2026) makes waiting for a short job cheap, with no new
+calls. AmigaChrome's cores board now takes a job as its doorbell is
+written and publishes a finished one as soon as the board is read, and
+says so in INFO's bit 18 (the fast path, `CORES_BOARD.md` section 0f).
+On such a board, and only there, `OMC_Run68k`, `OMC_Wait` and
+`OMC_RunRange` poll the board for up to 150 microseconds before they
+sleep in `Wait()`, so a short job comes back without a task switch.
+`ENV:OpenMulticore/PollMicros` (read as the connection is made) changes
+the time, and 0 turns polling off, for measuring. Any other board, a
+Cradle on the LAN, and the main CPU with no board (a real 68040) are
+exactly as in 0.4.
+
 ## Licence and credit
 
 OpenMulticore is free software under the MIT licence (`LICENSE`,
